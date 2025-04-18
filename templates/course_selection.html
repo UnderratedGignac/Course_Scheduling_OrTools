@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Course Selection</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <h1>Course Scheduler Pro</h1>
+<!-- Save and Reload Buttons -->
+<div style="margin-bottom: 20px;">
+    <button type="button" id="save-courses">Save Courses</button>
+    <input type="file" id="load-courses" style="display: none;" />
+    <button type="button" id="reload-courses">Reload Courses</button>
+</div>
+
+<!-- JavaScript for Save and Reload Functionality -->
+<script>
+    // Save courses to a file
+    document.getElementById('save-courses').addEventListener('click', () => {
+        const courses = [];
+        document.querySelectorAll('.course-card').forEach(courseCard => {
+            const courseName = courseCard.querySelector('label span').innerText.trim();
+            const instructor = courseCard.querySelector('.instructor-dropdown').value;
+            const section = courseCard.querySelector('input[name^="courses"]').value;
+            const year = courseCard.querySelector('[name^="year_"]').value;
+            const time = courseCard.querySelector('.time-dropdown').value;
+
+            // Only save if the course has an instructor selected
+            if (instructor) {
+                courses.push({ courseName, instructor, section, year, time });
+            }
+        });
+
+        if (courses.length === 0) {
+            alert('No courses with instructors selected to save.');
+            return;
+        }
+
+        const blob = new Blob([JSON.stringify(courses)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'courses.json';
+        a.click();
+        URL.revokeObjectURL(url);
+    });
+
+    // Reload courses from a file
+document.getElementById('reload-courses').addEventListener('click', () => {
+    document.getElementById('load-courses').click();
+});
+
+document.getElementById('load-courses').addEventListener('change', (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const savedCourses = JSON.parse(e.target.result);
+            const errors = []; // To collect errors during the loading process
+
+            savedCourses.forEach(({ courseName, instructor, section, year, time }) => {
+                // Split course name into course code and title
+                const [courseCode, courseTitle] = courseName.split(' - ');
+
+                // Recreate the course card dynamically
+                const courseCard = document.createElement("div");
+                courseCard.className = "course-card";
+                courseCard.innerHTML = `
+                    <button class="remove-course-btn" onclick="removeCourse('${section}')">&times;</button>
+                    <label style="display: flex; align-items: center;">
+                        <input type="checkbox" name="courses" value="${section}" checked>
+                        <span style="flex: 1;">${courseCode} - ${courseTitle}</span>
+                    </label>
+                    <select name="year_${section}">
+                        <option value="1" ${year == 1 ? "selected" : ""}>1st Year</option>
+                        <option value="2" ${year == 2 ? "selected" : ""}>2nd Year</option>
+                        <option value="3" ${year == 3 ? "selected" : ""}>3rd Year</option>
+                        <option value="4" ${year == 4 ? "selected" : ""}>4th Year</option>
+                        <option value="5" ${year == 5 ? "selected" : ""}>5th Year</option>
+                        <option value="6" ${year == 6 ? "selected" : ""}>Advanced</option>
+                    </select>
+                    <select name="instructor_${section}" class="instructor-dropdown">
+                        <option value="">Select Instructor</option>
+                    </select>
+                    <select name="time_${section}" class="time-dropdown">
+                        <option value="">Select Time (Optional)</option>
+                    </select>
+                    <input type="hidden" name="students_${section}" value="25">
+                `;
+
+                // Populate the instructor dropdown
+                const instructorDropdown = courseCard.querySelector('.instructor-dropdown');
+                populateInstructorDropdown(instructorDropdown);
+
+                // Check if the instructor is valid and within credit limits
+                const selectedCourse = courses.find(c => c.Code === courseCode);
+                const courseCredits = selectedCourse ? selectedCourse.credits || 0 : 0; // Default to 0 for custom courses
+                const maxCredits = semester === "Summer" ? 7 : 21; // Determine max credits based on semester
+
+                // Validate the instructor
+                if (!instructorAvailability[instructor]) {
+                    errors.push(`Error: Instructor "${instructor}" is not available for course "${courseName}".`);
+                    instructorDropdown.value = ""; // Clear the instructor dropdown
+                } else {
+                    const currentCredits = instructorCredits[instructor] || 0;
+                    if (currentCredits + courseCredits > maxCredits) {
+                        errors.push(`Error: Instructor "${instructor}" already has ${currentCredits} credits. Adding this course would exceed ${maxCredits}.`);
+                        instructorDropdown.value = ""; // Clear the instructor dropdown
+                    } else {
+                        instructorCredits[instructor] = currentCredits + courseCredits; // Update instructor credits
+                        instructorDropdown.value = instructor; // Set the instructor in the dropdown
+                    }
+                }
+
+                // Add event listener to update time slots based on instructor availability
+                instructorDropdown.addEventListener('change', (e) => {
+                    const selectedInstr = e.target.value;
+                    const timeDropdown = courseCard.querySelector('.time-dropdown');
+
+                    // Clear time dropdown options
+                    timeDropdown.innerHTML = '<option value="">Select Time (Optional)</option>';
+
+                    // Handle credit management
+                    const courseInput = courseCard.querySelector('input[name^="courses"]');
+                    const courseWithSection = courseInput.value;
+                    const courseCode = courseWithSection.split('_')[0];
+                    const selectedCourse = courses.find(c => c.Code === courseCode);
+                    const courseCredits = selectedCourse ? selectedCourse.credits || 0 : 0; // Default to 0 for custom courses
+                    const newInstr = selectedInstr;
+                    const oldInstr = e.target.dataset.prevInstructor || ''; // Get previous value
+
+                    // Handle old instructor's credits
+                    if (oldInstr && oldInstr !== newInstr) {
+                        instructorCredits[oldInstr] = (instructorCredits[oldInstr] || 0) - courseCredits;
+                        if (instructorCredits[oldInstr] <= 0) {
+                            delete instructorCredits[oldInstr];
+                        }
+                    }
+
+                    // Handle new instructor's credits
+                    if (newInstr) {
+                        const currentCredits = instructorCredits[newInstr] || 0;
+                        if (currentCredits + courseCredits > maxCredits) {
+                            showCustomAlert(`Error: ${newInstr} already has ${currentCredits} credits. Adding this course would exceed ${maxCredits}.`);
+                            e.target.value = oldInstr; // Revert selection
+                            return;
+                        }
+                        instructorCredits[newInstr] = currentCredits + courseCredits;
+                    } else {
+                        // If unselecting, subtract old instructor's credits
+                        if (oldInstr) {
+                            instructorCredits[oldInstr] = (instructorCredits[oldInstr] || 0) - courseCredits;
+                            if (instructorCredits[oldInstr] <= 0) {
+                                delete instructorCredits[oldInstr];
+                            }
+                        }
+                    }
+
+                    // Update stored previous value
+                    e.target.dataset.prevInstructor = newInstr;
+
+                    // Populate time slots based on instructor availability
+                    if (!selectedInstr) return;
+                    const availability = instructorAvailability[selectedInstr] || [];
+                    console.log(`Instructor ${selectedInstr} availability:`, availability);
+
+                    // Add options for available time slots
+                    timeSlots.forEach((time, index) => {
+                        if (availability.includes(time)) {
+                            const option = document.createElement('option');
+                            option.value = time;
+                            option.textContent = time;
+                            timeDropdown.appendChild(option);
+                        }
+                    });
+                });
+
+                // Trigger the change event on the instructor dropdown to update time slots
+                const changeEvent = new Event('change', { bubbles: true });
+                instructorDropdown.dispatchEvent(changeEvent);
+
+                // Populate the time dropdown after the time slots are updated
+                setTimeout(() => {
+                    const timeDropdown = courseCard.querySelector('.time-dropdown');
+                    timeDropdown.value = time;
+                }, 100); // Small delay to ensure time slots are updated
+
+                // Append the recreated course card to the #dynamic-courses container
+                document.getElementById("dynamic-courses").appendChild(courseCard);
+
+                // Add the course to the `addedCourses` set and `courseSections` object
+                addedCourses.add(section);
+                const [code, letter] = section.split('_');
+                if (!courseSections[code]) {
+                    courseSections[code] = [];
+                }
+                courseSections[code].push(letter);
+            });
+
+            // Display any collected errors
+            if (errors.length > 0) {
+                alert(errors.join("\n"));
+            } else {
+                alert('Courses reloaded successfully!');
+            }
+        } catch (error) {
+            alert('Error loading courses. Please ensure the file is valid.');
+        }
+    };
+    reader.readAsText(file);
+});
+</script>
+    <!-- Custom Alert Box -->
+    <div id="custom-alert">
+        <div class="message"></div>
+        <div class="progress-bar">
+            <div class="progress-bar-inner"></div>
+        </div>
+    </div>
+
+    <!-- Course Selection Form -->
+    <div class="card">
+        <form id="schedule-form" method="POST" action="/schedule">
+            <!-- Hidden fields for school_code and campus_code -->
+            <input type="hidden" name="school_code" value="{{ school_code }}">
+            <input type="hidden" name="campus_code" value="{{ campus_code }}">
+            <input type="hidden" name="academic_year" value="{{ academic_year }}">
+            <input type="hidden" name="semester" value="{{ semester }}"> <!-- Added -->
+            <!-- Course Selection Section -->
+            <div class="card">
+                <h3>Course Selection</h3>
+                <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+    <select id="course-dropdown">
+    <option value="">Select a Course</option>
+    {% for course in courses %}
+        <option value="{{ course.Code }}" data-course-year="{{ course.course_year }}">
+            {{ course.Code }} - {{ course.Title }}
+        </option>
+    {% endfor %}
+</select>
+    <button type="button" id="add-course-btn" class="add-instructor-btn">Add Course</button>
+</div>
+                <div class="course-selection" id="dynamic-courses"></div>
+                <button type="submit" style="margin-top: 20px;" class="add-instructor-btn">Generate Schedule</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Generated Schedule Display -->
+    <div class="card">
+        <h3>Generated Schedule</h3>
+        <pre id="schedule"></pre>
+    </div>
+    <div class="card">
+    <h3>Editable Schedule</h3>
+   <!-- Add a dropdown for filtering instructors -->
+<div class="card" style="margin-top: 20px;">
+    <h3>Filter and Sort Options</h3>
+    <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+        <label for="instructor-filter">Filter by Instructor:</label>
+        <select id="instructor-filter">
+            <option value="">Show All</option>
+        </select>
+        <button id="sort-by-time-btn" class="add-instructor-btn">Sort by Time</button>
+    </div>
+</div>
+
+<script>
+// Function to populate the instructor filter dropdown with instructors who have courses assigned
+function populateInstructorFilter() {
+    const instructorFilterDropdown = document.getElementById("instructor-filter");
+    const assignedInstructors = new Set();
+
+    // Get all rows from the editable schedule table
+    const rows = document.querySelectorAll("#editable-schedule tbody tr");
+
+    // Extract unique instructors from the rows
+    rows.forEach(row => {
+        const instructorCell = row.querySelector("td:nth-child(4)").textContent.trim();
+        if (instructorCell) {
+            assignedInstructors.add(instructorCell);
+        }
+    });
+
+    // Clear existing options
+    instructorFilterDropdown.innerHTML = '<option value="">Show All</option>';
+
+    // Add options for each assigned instructor
+    assignedInstructors.forEach(instructor => {
+        const option = document.createElement("option");
+        option.value = instructor;
+        option.textContent = instructor;
+        instructorFilterDropdown.appendChild(option);
+    });
+}
+
+// Function to sort rows by time using the timeSlots array
+function sortRowsByTime() {
+    const rows = Array.from(document.querySelectorAll("#editable-schedule tbody tr"));
+    let timeSlotsOrder;
+
+    // Determine the timeSlots array based on the semester
+    if (semester === "Summer") {
+        timeSlotsOrder = [
+            "MWTTH 8:00-9:50", "MWTTH 10:00-11:50", "MWTTH 12:00-1:50"
+        ];
+    } else {
+        timeSlotsOrder = [
+            "MW 8:00-9:15 AM", "MW 9:30-10:45 AM", "MW 11:00 AM-12:15 PM",
+            "MW 12:30-1:45 PM", "MW 2:00-3:15 PM", "MW 3:30-4:45 PM",
+            "MW 5:00-6:15 PM", "MW 6:30-8:45 PM",
+            "TTh 8:00-9:15 AM", "TTh 9:30-11:45 AM", "TTh 11:00 AM-12:15 PM",
+            "TTh 12:30-1:45 PM", "TTh 2:00-3:15 PM", "TTh 3:30-4:45 PM",
+            "TTh 5:00-6:15 PM", "TTh 6:30-8:45 PM"
+        ];
+    }
+
+    // Sort rows based on the timeSlots array
+    rows.sort((rowA, rowB) => {
+        const timeA = rowA.querySelector("td:nth-child(3)").textContent.trim();
+        const timeB = rowB.querySelector("td:nth-child(3)").textContent.trim();
+
+        // Handle cases where time is "Automatic" or empty
+        const indexA = timeA && timeSlotsOrder.includes(timeA) ? timeSlotsOrder.indexOf(timeA) : Infinity;
+        const indexB = timeB && timeSlotsOrder.includes(timeB) ? timeSlotsOrder.indexOf(timeB) : Infinity;
+
+        return indexA - indexB;
+    });
+
+    // Re-append sorted rows to the table body
+    const tableBody = document.querySelector("#editable-schedule tbody");
+    tableBody.innerHTML = ""; // Clear the table body
+    rows.forEach(row => tableBody.appendChild(row)); // Append sorted rows
+}
+
+// Initialize functionality when the DOM is fully loaded
+document.addEventListener("DOMContentLoaded", () => {
+    // Populate the instructor filter dropdown initially
+    populateInstructorFilter();
+
+    // Observe changes in the table body to dynamically update the dropdown
+    const observer = new MutationObserver(() => {
+        populateInstructorFilter();
+    });
+
+    const tableBody = document.querySelector("#editable-schedule tbody");
+    if (tableBody) {
+        observer.observe(tableBody, { childList: true });
+    }
+
+    // Add event listener for instructor filtering
+    document.getElementById("instructor-filter").addEventListener("change", (e) => {
+        const selectedInstructor = e.target.value;
+        const rows = document.querySelectorAll("#editable-schedule tbody tr");
+
+        rows.forEach(row => {
+            const instructorCell = row.querySelector("td:nth-child(4)").textContent.trim();
+            if (selectedInstructor === "" || instructorCell === selectedInstructor) {
+                row.style.display = ""; // Show the row
+            } else {
+                row.style.display = "none"; // Hide the row
+            }
+        });
+    });
+
+    // Add event listener for sorting by time
+    document.getElementById("sort-by-time-btn").addEventListener("click", () => {
+        sortRowsByTime();
+    });
+});
+</script>
+    <table id="editable-schedule" border="1">
+        <thead>
+            <tr>
+                <th>Section</th>
+                <th>Course</th>
+                <th>Time</th>
+                <th>Instructor</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- Rows will be dynamically added here -->
+        </tbody>
+    </table>
+    <button id="export-excel-btn" class="add-instructor-btn">Export to Excel</button>
+</div>
+    <script>
+    const academicYear = "{{ academic_year }}";
+    const semester = "{{ semester }}";
+    console.log(`[DEBUG] Academic Year: ${academicYear}, Semester: ${semester}`);
+</script>
+    <script>
+    var timeSlots = [
+    {% if semester == "Summer" %}
+        "MWTTH 8:00-9:50", "MWTTH 10:00-11:50", "MWTTH 12:00-1:50"
+    {% else %}
+        "MW 8:00-9:15 AM", "MW 9:30-10:45 AM", "MW 11:00 AM-12:15 PM",
+    "MW 12:30-1:45 PM", "MW 2:00-3:15 PM", "MW 3:30-4:45 PM",
+    "MW 5:00-6:15 PM", "MW 6:30-8:45 PM",
+    "TTh 8:00-9:15 AM", "TTh 9:30-11:45 AM", "TTh 11:00 AM-12:15 PM",
+    "TTh 12:30-1:45 PM", "TTh 2:00-3:15 PM", "TTh 3:30-4:45 PM",
+    "TTh 5:00-6:15 PM", "TTh 6:30-8:45 PM"
+    {% endif %}
+];
+
+    const courses = JSON.parse('{{ courses | tojson | safe }}');
+    const instructors = JSON.parse('{{ instructors | tojson | safe }}');
+    const addedCourses = new Set();
+    const courseSections = {};
+    let instructorAvailability = {}; // To store fetched instructor availability
+    let instructorCredits = {}; // Track total credits assigned to each instructor
+
+    document.addEventListener("DOMContentLoaded", function () {
+    const schoolCode = "{{ school_code }}";
+    const campusCode = "{{ campus_code }}";
+    const academicYear = "{{ academic_year }}"; // Retrieve academic year from the template
+    const semester = "{{ semester }}";         // Retrieve semester from the template
+    console.log(`[DEBUG] Fetching instructor availability for school_code: ${schoolCode}, campus_code: ${campusCode}, academic_year: ${academicYear}, semester: ${semester}`);
+
+    fetch(`/fetch_instructor_availability?school_code=${schoolCode}&campus_code=${campusCode}&academic_year=${academicYear}&semester=${semester}`)
+        .then(response => response.json())
+        .then(data => {
+            console.log("[DEBUG] Received instructor availability data:", data);
+            if (data.error) {
+                console.error("[ERROR] Error fetching instructor availability:", data.error);
+                showCustomAlert(`Error: ${data.error}`);
+                return;
+            }
+            instructorAvailability = data.instructor_availability;
+            console.log("[DEBUG] Extracted instructor availability:", instructorAvailability);
+
+            // Populate all existing instructor dropdowns
+            document.querySelectorAll('.instructor-dropdown').forEach(dropdown => {
+                populateInstructorDropdown(dropdown);
+            });
+        })
+        .catch(error => {
+            console.error("[ERROR] Error fetching instructor availability:", error);
+            showCustomAlert("Failed to load instructor availability.");
+        });
+});
+</script>
+    <script>
+    // Function to populate instructor dropdowns dynamically
+    const populateInstructorDropdown = (dropdown) => {
+        dropdown.innerHTML = '<option value="">Select Instructor</option>';
+        for (const [facuser, availableSlots] of Object.entries(instructorAvailability)) {
+            const option = document.createElement("option");
+            option.value = facuser;
+            option.textContent = `${facuser} (${availableSlots.length} slots available)`;
+            dropdown.appendChild(option);
+        }
+    };
+</script>
+    <script>
+        document.getElementById("add-course-btn").addEventListener("click", () => {
+    const dropdown = document.getElementById("course-dropdown");
+    const selectedCode = dropdown.value;
+    if (!selectedCode) return;
+
+    // Get the selected course details
+    const selectedOption = dropdown.querySelector(`option[value="${selectedCode}"]`);
+    const selectedCourse = courses.find(c => c.Code === selectedCode);
+
+    // If the course is not found in the backend data, treat it as a custom course
+    const courseYear = selectedOption ? selectedOption.getAttribute("data-course-year") : "1"; // Default year
+    const courseCredits = selectedCourse ? selectedCourse.credits || 0 : 0; // Default credits for custom courses
+
+    let nextLetter = 'A';
+    const existingSections = courseSections[selectedCode] || [];
+
+    // Find the next available section letter (A-Z)
+    for (let i = 0; i < 26; i++) {
+        const candidate = String.fromCharCode(65 + i);
+        if (!existingSections.includes(candidate)) {
+            nextLetter = candidate;
+            break;
+        }
+    }
+
+    if (!courseSections[selectedCode]) {
+        courseSections[selectedCode] = [];
+    }
+    courseSections[selectedCode].push(nextLetter);
+
+    const courseWithSection = `${selectedCode}_${nextLetter}`;
+    addedCourses.add(courseWithSection);
+
+    // Create a new course card
+    const courseCard = document.createElement("div");
+    courseCard.className = "course-card";
+    courseCard.innerHTML = `
+        <button class="remove-course-btn" onclick="removeCourse('${courseWithSection}')">&times;</button>
+        <label style="display: flex; align-items: center;">
+            <input type="checkbox" name="courses" value="${courseWithSection}" checked>
+            <span style="flex: 1;">${selectedCode} ${nextLetter} - ${selectedCourse ? selectedCourse.Title : 'Custom Course'}</span>
+        </label>
+        <select name="year_${courseWithSection}">
+            <option value="1" ${courseYear == 1 ? "selected" : ""}>1st Year</option>
+            <option value="2" ${courseYear == 2 ? "selected" : ""}>2nd Year</option>
+            <option value="3" ${courseYear == 3 ? "selected" : ""}>3rd Year</option>
+            <option value="4" ${courseYear == 4 ? "selected" : ""}>4th Year</option>
+            <option value="5" ${courseYear == 5 ? "selected" : ""}>5th Year</option>
+            <option value="6" ${courseYear == 6 ? "selected" : ""}>Advanced</option>
+        </select>
+        <select name="instructor_${courseWithSection}" class="instructor-dropdown">
+            <option value="">Select Instructor</option>
+        </select>
+        <select name="time_${courseWithSection}" class="time-dropdown">
+            <option value="">Select Time (Optional)</option>
+        </select>
+        <input type="hidden" name="students_${courseWithSection}" value="25">
+    `;
+
+    // Populate the instructor dropdown
+    const instructorSelect = courseCard.querySelector('.instructor-dropdown');
+    populateInstructorDropdown(instructorSelect);
+
+    // Update time slots based on instructor availability
+    instructorSelect.addEventListener('change', (e) => {
+        const selectedInstr = e.target.value;
+        const timeDropdown = courseCard.querySelector('.time-dropdown');
+
+        // Clear time dropdown options
+        timeDropdown.innerHTML = '<option value="">Select Time (Optional)</option>';
+
+        // New Logic for Credit Management
+        const courseInput = courseCard.querySelector('input[name^="courses"]');
+        const courseWithSection = courseInput.value;
+        const courseCode = courseWithSection.split('_')[0];
+        const courseCredits = selectedCourse ? selectedCourse.credits || 0 : 0; // Default to 0 for custom courses
+        const newInstr = selectedInstr;
+        const oldInstr = e.target.dataset.prevInstructor || ''; // Get previous value
+
+        // Handle old instructor's credits
+        if (oldInstr && oldInstr !== newInstr) {
+            instructorCredits[oldInstr] = (instructorCredits[oldInstr] || 0) - courseCredits;
+            if (instructorCredits[oldInstr] <= 0) {
+                delete instructorCredits[oldInstr];
+            }
+        }
+
+        // Determine max credits based on semester
+const isSummerSemester = semester === "Summer"; // Use the existing `semester` variable
+const maxCredits = isSummerSemester ? 7 : 21;
+
+// Handle new instructor's credits
+if (newInstr) {
+    const currentCredits = instructorCredits[newInstr] || 0;
+    if (currentCredits + courseCredits > maxCredits) {
+        showCustomAlert(`Error: ${newInstr} already has ${currentCredits} credits. Adding this course would exceed ${maxCredits}.`);
+        e.target.value = oldInstr; // Revert selection
+        return;
+    }
+    instructorCredits[newInstr] = currentCredits + courseCredits;
+} else {
+    // If unselecting, subtract old instructor's credits
+    if (oldInstr) {
+        instructorCredits[oldInstr] = (instructorCredits[oldInstr] || 0) - courseCredits;
+        if (instructorCredits[oldInstr] <= 0) {
+            delete instructorCredits[oldInstr];
+        }
+    }
+}
+
+        // Update stored previous value
+        e.target.dataset.prevInstructor = newInstr;
+
+        // Populate time slots based on instructor availability
+        if (!selectedInstr) return;
+        const availability = instructorAvailability[selectedInstr] || [];
+        console.log(`Instructor ${selectedInstr} availability:`, availability);
+
+        // Add options for available time slots
+        timeSlots.forEach((time, index) => {
+            if (availability.includes(time)) {
+                const option = document.createElement('option');
+                option.value = time;
+                option.textContent = time;
+                timeDropdown.appendChild(option);
+            }
+        });
+    });
+
+    document.getElementById("dynamic-courses").appendChild(courseCard);
+});
+</script>
+    <script>
+    // Form submission event listener
+document.querySelector("#schedule-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+   // Validate instructor credits
+const isSummerSemester = semester === "Summer"; // Use the existing `semester` variable
+const maxCredits = isSummerSemester ? 7 : 21;
+
+const conflicts = [];
+for (const [instrId, totalCredits] of Object.entries(instructorCredits)) {
+    if (totalCredits > maxCredits) {
+        const instrName = instructors.find(i => i.facuser === instrId)?.facuser || 'Unknown';
+        conflicts.push(`Instructor ${instrName} has ${totalCredits} credits assigned (max ${maxCredits} allowed).`);
+    }
+}
+
+    // Validate that all courses have an instructor selected
+    const courseEntries = Array.from(document.querySelectorAll('.course-card'));
+    courseEntries.forEach(courseCard => {
+        const instructorDropdown = courseCard.querySelector('.instructor-dropdown');
+        const courseName = courseCard.querySelector('label span').textContent;
+        if (!instructorDropdown.value) {
+            conflicts.push(`Error: No instructor selected for ${courseName}.`);
+        }
+    });
+
+    // Display conflicts if any exist
+    if (conflicts.length > 0) {
+        showCustomAlert(conflicts.join("\n"));
+        return;
+    }
+
+    // Check for scheduling conflicts
+    courseEntries.forEach(course1 => {
+        const course2Entries = courseEntries.slice(courseEntries.indexOf(course1) + 1);
+        course2Entries.forEach(course2 => {
+            const instr1 = course1.querySelector('.instructor-dropdown').value;
+            const instr2 = course2.querySelector('.instructor-dropdown').value;
+            const time1 = course1.querySelector('.time-dropdown').value;
+            const time2 = course2.querySelector('.time-dropdown').value;
+            const year1 = course1.querySelector('[name^="year_"]').value;
+            const year2 = course2.querySelector('[name^="year_"]').value;
+
+            if (instr1 && instr1 === instr2 && time1 && time1 === time2) {
+                conflicts.push(`Conflict: ${course1.querySelector('label span').textContent} and
+                                ${course2.querySelector('label span').textContent}
+                                have the same instructor and time.`);
+            }
+
+            if (year1 === year2 && time1 && time1 === time2) {
+                const courseCode1 = course1.querySelector('[name^="courses"]').value.split('_')[0];
+                const courseCode2 = course2.querySelector('[name^="courses"]').value.split('_')[0];
+                if (courseCode1 !== courseCode2) {
+                    conflicts.push(`Conflict: ${course1.querySelector('label span').textContent} and
+                                    ${course2.querySelector('label span').textContent}
+                                    are in the same year but are different courses.`);
+                }
+            }
+        });
+    });
+
+    if (conflicts.length > 0) {
+        showCustomAlert(conflicts.join("\n"));
+        return;
+    }
+
+    // Submit form data
+    const formData = new FormData(e.target);
+    try {
+        const response = await fetch("/schedule", { method: "POST", body: formData });
+        const result = await response.json();
+        if (result.error) {
+            showCustomAlert(`Error: ${result.error}`);
+        } else {
+            document.getElementById("schedule").textContent = formatSchedule(result);
+        }
+    } catch (error) {
+        showCustomAlert(`Network Error: ${error.message}`);
+    }
+});
+</script>
+    <script>
+    // Function to format the schedule output
+   function formatSchedule(data) {
+    let text = "";
+    const tableBody = document.querySelector("#editable-schedule tbody");
+    tableBody.innerHTML = ""; // Clear previous rows
+
+    for (const section in data) {
+        if (section === "completion_time") continue;
+        const [courseCode, sectionLetter] = section.split("_");
+        const course = courses.find(c => c.Code === courseCode);
+
+        // Add row to the editable schedule table
+        const row = document.createElement("tr");
+        row.innerHTML = `
+            <td>${section}</td>
+            <td>${course ? course.Title : 'Unknown'}</td>
+            <td contenteditable="true">${data[section].time || 'Automatic'}</td>
+            <td contenteditable="true">${data[section].instructor}</td>
+        `;
+        tableBody.appendChild(row);
+
+        // Append to the formatted text
+        text += `Section ${section}:
+Course: ${course ? course.Title : 'Unknown'}
+Time: ${data[section].time || 'Automatic'}
+Instructor: ${data[section].instructor}
+`;
+    }
+    text += `Schedule completes by ${data.completion_time}.`;
+    return text;
+}
+
+    function showCustomAlert(message, duration = 5000) {
+    const alertBox = document.getElementById('custom-alert');
+    const messageElement = alertBox.querySelector('.message');
+    const progressBarInner = alertBox.querySelector('.progress-bar-inner');
+
+    // Clean up the message content
+    message = message.trim().replace(/\n+/g, '\n'); // Remove extra line breaks
+
+    // Reset the progress bar animation
+    progressBarInner.style.animation = 'none';
+    void progressBarInner.offsetWidth; // Trigger reflow to restart animation
+    progressBarInner.style.animation = `shrink-progress-bar ${duration}ms linear forwards`;
+
+    // Update the message content
+    messageElement.textContent = message;
+
+    // Show the alert box
+    alertBox.style.display = 'block';
+    alertBox.style.opacity = 1;
+
+    // Force the browser to recalculate the height
+    alertBox.style.height = 'auto'; // Reset height to auto
+    alertBox.scrollTop = 0; // Scroll to the top (useful for long messages)
+
+    // Hide the alert box after the specified duration
+    setTimeout(() => {
+        alertBox.style.opacity = 0;
+        setTimeout(() => {
+            alertBox.style.display = 'none';
+        }, 500); // Match this duration with the CSS transition duration
+    }, duration);
+}
+</script>
+<script>
+function removeCourse(courseWithSection) {
+    // Remove the course from the `addedCourses` set
+    addedCourses.delete(courseWithSection);
+
+    // Split the course code and section letter
+    const [courseCode, sectionLetter] = courseWithSection.split('_');
+
+    // Find the course details to get its credits
+    const selectedCourse = courses.find(c => c.Code === courseCode);
+    const courseCredits = selectedCourse ? selectedCourse.credits || 0 : 0; // Default to 0 if course is not found
+
+    // Remove the section from the `courseSections` object
+    if (courseSections[courseCode]) {
+        const index = courseSections[courseCode].indexOf(sectionLetter);
+        if (index > -1) {
+            courseSections[courseCode].splice(index, 1); // Remove the section letter
+            if (courseSections[courseCode].length === 0) {
+                delete courseSections[courseCode]; // Delete the course code if no sections remain
+            }
+        }
+    }
+
+    // Find the instructor assigned to this course
+    const courseCard = document.querySelector(`[value="${courseWithSection}"]`).closest(".course-card");
+    const instructorDropdown = courseCard.querySelector('.instructor-dropdown');
+    const selectedInstr = instructorDropdown.value;
+
+    // Update the instructor's total credits
+    if (selectedInstr) {
+        instructorCredits[selectedInstr] = (instructorCredits[selectedInstr] || 0) - courseCredits;
+        // If the instructor has no credits left, reset their entry in the object
+        if (instructorCredits[selectedInstr] <= 0) {
+            delete instructorCredits[selectedInstr];
+        }
+    }
+
+    // Remove the course card from the DOM
+    courseCard.remove();
+}
+</script>
+
+</body>
+<style>
+  /* Custom Alert Styling */
+        #custom-alert {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(255, 255, 255, 0.95);
+            color: #333;
+            padding: 25px 40px;
+            border-radius: 12px;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+            z-index: 1000;
+            display: none;
+            font-family: 'Arial', sans-serif;
+            font-size: 16px;
+            line-height: 1.5;
+            text-align: center;
+            opacity: 1;
+            transition: opacity 0.5s ease-in-out;
+            width: 350px;
+        }
+
+        /* Progress Bar for Timer */
+        #custom-alert .progress-bar {
+            margin-top: 15px;
+            height: 8px;
+            background-color: rgba(0, 0, 0, 0.1);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        #custom-alert .progress-bar-inner {
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, #00bfff, #0074b2);
+            animation: shrink-progress-bar 5s linear forwards;
+        }
+
+        @keyframes shrink-progress-bar {
+            from { width: 100% }
+            to { width: 0% }
+        }
+
+</style>
+<script>
+    document.getElementById("export-excel-btn").addEventListener("click", () => {
+    const table = document.getElementById("editable-schedule");
+    const rows = table.querySelectorAll("tr");
+    let csvContent = "data:text/csv;charset=utf-8,";
+
+    // Extract headers
+    const headers = Array.from(rows[0].querySelectorAll("th")).map(th => th.innerText);
+    csvContent += headers.join(",") + "\n";
+
+    // Extract rows
+    for (let i = 1; i < rows.length; i++) {
+        const cells = rows[i].querySelectorAll("td");
+        const rowData = Array.from(cells).map(cell => cell.innerText);
+        csvContent += rowData.join(",") + "\n";
+    }
+
+    // Create and download the CSV file
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "schedule.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+});
+</script>
+</html>
