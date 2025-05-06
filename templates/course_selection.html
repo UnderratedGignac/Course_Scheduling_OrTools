@@ -7,67 +7,356 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
+<!-- Reload Confirmation Modal -->
+<div id="reloadModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); display: none; z-index: 1000;">
+  <div style="background-color: #fff; margin: 15% auto; padding: 20px; border-radius: 8px; width: 300px; box-shadow: 0 5px 15px rgba(0,0,0,0.3);">
+    <h3>Resume Previous Session?</h3>
+    <p>Would you like to reload previously saved courses?</p>
+    <button id="confirmReload" style="margin-right: 10px;">Reload</button>
+    <button id="cancelReload">Cancel</button>
+  </div>
+</div>
+<script>
+   function reloadCoursesFromData(parsedData) {
+    const dynamicCourses = document.getElementById("dynamic-courses");
+
+    // Clear current UI
+    dynamicCourses.innerHTML = '';
+    addedCourses.clear();
+    Object.keys(courseSections).forEach(key => delete courseSections[key]);
+    Object.keys(instructorCredits).forEach(key => delete instructorCredits[key]);
+
+    parsedData.courses.forEach(({ courseName, instructor, section, year, time }) => {
+        const [courseCode, courseTitle] = courseName.split(' - ');
+
+        const courseCard = document.createElement("div");
+        courseCard.className = "course-card";
+        courseCard.innerHTML = `
+            <button class="remove-course-btn" onclick="removeCourse('${section}')">&times;</button>
+            <label style="display: flex; align-items: center;">
+                <input type="checkbox" name="courses" value="${section}" checked>
+                <span style="flex: 1;">${courseCode} - ${courseTitle}</span>
+            </label>
+            <select name="year_${section}">
+                <option value="1" ${year == 1 ? "selected" : ""}>1st Year</option>
+                <option value="2" ${year == 2 ? "selected" : ""}>2nd Year</option>
+                <option value="3" ${year == 3 ? "selected" : ""}>3rd Year</option>
+                <option value="4" ${year == 4 ? "selected" : ""}>4th Year</option>
+                <option value="5" ${year == 5 ? "selected" : ""}>5th Year</option>
+                <option value="6" ${year == 6 ? "selected" : ""}>Advanced</option>
+            </select>
+            <select name="instructor_${section}" class="instructor-dropdown">
+                <option value="">Select Instructor</option>
+            </select>
+            <select name="time_${section}" class="time-dropdown">
+                <option value="">Select Time (Optional)</option>
+            </select>
+            <input type="hidden" name="students_${section}" value="25">
+        `;
+
+        const instructorDropdown = courseCard.querySelector('.instructor-dropdown');
+        const timeDropdown = courseCard.querySelector('.time-dropdown');
+
+        populateInstructorDropdown(instructorDropdown);
+
+        setTimeout(() => {
+    if (instructor && instructorAvailability[instructor]) {
+        instructorDropdown.value = instructor;
+
+        // Dispatch change event to populate time dropdown
+        const changeEvent = new Event('change', { bubbles: true });
+        instructorDropdown.dispatchEvent(changeEvent);
+
+        // ✅ Set the time immediately after the dropdown is populated
+        if (time) {
+            timeDropdown.value = time;
+        }
+    }
+}, 10);
+
+        // 🟢 Attach instructor change handler (with save)
+        instructorDropdown.addEventListener('change', (e) => {
+            const selectedInstr = e.target.value;
+            const courseInput = courseCard.querySelector('input[name^="courses"]');
+            const courseWithSection = courseInput.value;
+            const [code] = courseWithSection.split('_');
+            const selectedCourse = courses.find(c => c.Code === code);
+            const courseCredits = selectedCourse ? selectedCourse.credits || 0 : 0;
+            const maxCredits = semester === "Summer" ? 7 : 21;
+
+            timeDropdown.innerHTML = '<option value="">Select Time (Optional)</option>';
+
+            const oldInstr = e.target.dataset.prevInstructor || '';
+            const newInstr = selectedInstr;
+
+            if (oldInstr && oldInstr !== newInstr) {
+                instructorCredits[oldInstr] = Math.max((instructorCredits[oldInstr] || 0) - courseCredits, 0);
+                if (instructorCredits[oldInstr] <= 0) delete instructorCredits[oldInstr];
+            }
+
+            if (newInstr) {
+                const currentCredits = instructorCredits[newInstr] || 0;
+                if (currentCredits + courseCredits > maxCredits) {
+                    showCustomAlert(`Error: ${newInstr} exceeds credit limit.`);
+                    e.target.value = oldInstr;
+                    return;
+                }
+                instructorCredits[newInstr] = currentCredits + courseCredits;
+            } else if (oldInstr) {
+                instructorCredits[oldInstr] = Math.max((instructorCredits[oldInstr] || 0) - courseCredits, 0);
+                if (instructorCredits[oldInstr] <= 0) delete instructorCredits[oldInstr];
+            }
+
+            e.target.dataset.prevInstructor = newInstr;
+
+            if (!selectedInstr) return;
+
+            const availability = instructorAvailability[selectedInstr] || [];
+            timeSlots.forEach((slot) => {
+                if (availability.includes(slot)) {
+                    const option = document.createElement('option');
+                    option.value = slot;
+                    option.textContent = slot;
+                    timeDropdown.appendChild(option);
+                }
+            });
+
+            saveCourses(true); // ✅ Trigger save after instructor logic
+        });
+
+        // 🟡 Attach save listener to all dropdowns in this course card
+        courseCard.querySelectorAll('select').forEach(dropdown => {
+            dropdown.addEventListener('change', () => {
+                saveCourses(true); // ✅ Save silently
+            });
+        });
+
+        dynamicCourses.appendChild(courseCard);
+        addedCourses.add(section);
+
+        const [code, letter] = section.split('_');
+        if (!courseSections[code]) courseSections[code] = [];
+        courseSections[code].push(letter);
+    });
+
+    alert('Courses reloaded successfully!');
+}
+document.addEventListener('DOMContentLoaded', function () {
+    const savedData = localStorage.getItem('savedCourses');
+    if (!savedData) return;
+
+    try {
+        const parsedData = JSON.parse(savedData);
+        const { school_code, campus_code, academic_year, semester } = parsedData;
+
+        const currentSchoolCode = document.querySelector('input[name="school_code"]')?.value || '';
+        const currentCampusCode = document.querySelector('input[name="campus_code"]')?.value || '';
+        const currentAcademicYear = document.querySelector('input[name="academic_year"]')?.value || '';
+        const currentSemester = document.querySelector('input[name="semester"]')?.value || '';
+
+        // Only show modal if metadata matches
+        if (
+            school_code === currentSchoolCode &&
+            campus_code === currentCampusCode &&
+            academic_year === currentAcademicYear &&
+            semester === currentSemester
+        ) {
+            const modal = document.getElementById('reloadModal');
+            modal.style.display = 'block';
+
+            document.getElementById('confirmReload').onclick = function () {
+                reloadCoursesFromData(parsedData);
+                modal.style.display = 'none';
+            };
+
+            document.getElementById('cancelReload').onclick = function () {
+                modal.style.display = 'none';
+            };
+        }
+    } catch (e) {
+        console.error('Failed to parse saved data on load:', e);
+    }
+});
+</script>
     <h1>Course Scheduler Pro</h1>
 <!-- Save and Reload Buttons -->
 <div style="margin-bottom: 20px;">
-    <button type="button" id="save-courses">Save Courses</button>
+    <button type="button" id="save-courses" style="display: none;" >Save Courses</button>
     <input type="file" id="load-courses" style="display: none;" />
-    <button type="button" id="reload-courses">Reload Courses</button>
+    <button type="button" id="reload-courses" style="display: none;" >Reload Courses</button>
 </div>
-
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <!-- JavaScript for Save and Reload Functionality -->
 <script>
-    // Save courses to a file
-    document.getElementById('save-courses').addEventListener('click', () => {
-        const courses = [];
-        document.querySelectorAll('.course-card').forEach(courseCard => {
-            const courseName = courseCard.querySelector('label span').innerText.trim();
-            const instructor = courseCard.querySelector('.instructor-dropdown').value;
-            const section = courseCard.querySelector('input[name^="courses"]').value;
-            const year = courseCard.querySelector('[name^="year_"]').value;
-            const time = courseCard.querySelector('.time-dropdown').value;
+ function saveCourses(silent = false) {
+    console.log('🚀 Starting course save operation...');
 
-            // Only save if the course has an instructor selected
-            if (instructor) {
-                courses.push({ courseName, instructor, section, year, time });
+    const courses = [];
+    const courseCards = document.querySelectorAll('.course-card');
+
+    console.log(`Found ${courseCards.length} course cards to process`);
+
+    courseCards.forEach((courseCard, index) => {
+        try {
+            // Get course data with fallback values
+            const courseName = courseCard.querySelector('label span')?.innerText.trim() || 'Unknown Course';
+            const instructor = courseCard.querySelector('.instructor-dropdown')?.value || '';
+            const sectionInput = courseCard.querySelector('input[name^="courses"]');
+            const yearSelect = courseCard.querySelector('[name^="year_"]');
+            const timeSelect = courseCard.querySelector('.time-dropdown');
+
+            // Extract values with fallbacks
+            const section = sectionInput?.value || '';
+            const year = yearSelect?.value || '';
+            const time = timeSelect?.value || '';
+
+            // Always push the course, even if instructor is unassigned
+            courses.push({
+                courseName,
+                instructor,
+                section,
+                year,
+                time
+            });
+
+            // Log with appropriate emoji based on instructor status
+            const emoji = instructor ? '✅' : '🟡';
+            const instructorStatus = instructor ? `Instructor: ${instructor}` : 'No instructor assigned';
+
+            console.log(`${emoji} Processed course ${index + 1}: ${courseName} - ${instructorStatus}`);
+
+        } catch (error) {
+            console.error(`❌ Error processing course card ${index + 1}:`, error);
+        }
+    });
+
+    // Validate we have courses to save
+    if (courseCards.length === 0) {
+        console.warn('No course cards found in DOM');
+        if (!silent) {
+            alert('No courses found to save.');
+        }
+        return;
+    }
+
+    // Collect metadata
+    const metadata = {
+        school_code: document.querySelector('input[name="school_code"]')?.value || '',
+        campus_code: document.querySelector('input[name="campus_code"]')?.value || '',
+        academic_year: document.querySelector('input[name="academic_year"]')?.value || '',
+        semester: document.querySelector('input[name="semester"]')?.value || ''
+    };
+
+    // Log collected data
+    console.log('Metadata collected:', metadata);
+    console.log('Courses to save:', courses);
+
+    // Save to localStorage
+    const savedData = {
+        ...metadata,
+        courses: courses
+    };
+
+    localStorage.setItem('savedCourses', JSON.stringify(savedData));
+    console.log('💾 Successfully saved data to localStorage');
+
+    // Show UI feedback only when not silent
+    if (!silent) {
+        const instructorlessCount = courses.filter(c => !c.instructor).length;
+        const warning = instructorlessCount > 0 ?
+            `\n⚠️ ${instructorlessCount} course(s) saved without instructor assignments` : '';
+
+        alert(`Courses and settings saved successfully!${warning}`);
+        console.log('✨ UI feedback shown: Save successful');
+    }
+}
+
+// Event listener for save button
+document.getElementById('save-courses')?.addEventListener('click', () => {
+    console.log('🖱️ Save button clicked');
+    saveCourses(false);
+});
+
+// Event listeners for dropdown changes
+const dropdowns = document.querySelectorAll('.instructor-dropdown, .time-dropdown');
+console.log(`Attaching change listeners to ${dropdowns.length} dropdowns`);
+
+dropdowns.forEach(dropdown => {
+    dropdown.addEventListener('change', () => {
+        console.log(`🔄 Dropdown changed: ${dropdown.className}`);
+        saveCourses(true);
+    });
+});
+
+// Optional: Add mutation observer for dynamically added course cards
+const observeCourseCards = () => {
+    const targetNode = document.body;
+    const config = { childList: true, subtree: true };
+
+    const callback = (mutationsList) => {
+        for (const mutation of mutationsList) {
+            if (mutation.type === 'childList') {
+                mutation.addedNodes.forEach(node => {
+                    if (node.classList?.contains('course-card')) {
+                        console.log('🆕 New course card detected');
+                        saveCourses(true);
+                    }
+                });
             }
-        });
+        }
+    };
 
-        if (courses.length === 0) {
-            alert('No courses with instructors selected to save.');
+    const observer = new MutationObserver(callback);
+    observer.observe(targetNode, config);
+};
+
+// Start observing for dynamic content
+observeCourseCards();
+
+console.log('✅ Course saving system initialized');
+
+    // Reload courses from localStorage only if metadata matches
+    document.getElementById('reload-courses').addEventListener('click', () => {
+        const savedData = localStorage.getItem('savedCourses');
+        if (!savedData) {
+            alert('No saved courses found in local storage.');
             return;
         }
 
-        const blob = new Blob([JSON.stringify(courses)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'courses.json';
-        a.click();
-        URL.revokeObjectURL(url);
-    });
-
-    // Reload courses from a file
-document.getElementById('reload-courses').addEventListener('click', () => {
-    document.getElementById('load-courses').click();
-});
-
-document.getElementById('load-courses').addEventListener('change', (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
         try {
-            const savedCourses = JSON.parse(e.target.result);
-            const errors = []; // To collect errors during the loading process
+            const parsedData = JSON.parse(savedData);
+            const { school_code, campus_code, academic_year, semester, courses } = parsedData;
 
-            savedCourses.forEach(({ courseName, instructor, section, year, time }) => {
-                // Split course name into course code and title
+            const currentSchoolCode = document.querySelector('input[name="school_code"]').value;
+            const currentCampusCode = document.querySelector('input[name="campus_code"]').value;
+            const currentAcademicYear = document.querySelector('input[name="academic_year"]').value;
+            const currentSemester = document.querySelector('input[name="semester"]').value;
+
+            if (
+                school_code !== currentSchoolCode ||
+                campus_code !== currentCampusCode ||
+                academic_year !== currentAcademicYear ||
+                semester !== currentSemester
+            ) {
+                alert(`Cannot reload courses. Session mismatch:\n\n` +
+                    `Saved: School=${school_code}, Campus=${campus_code}, Year=${academic_year}, Semester=${semester}\n` +
+                    `Current: School=${currentSchoolCode}, Campus=${currentCampusCode}, Year=${currentAcademicYear}, Semester=${currentSemester}`);
+                return;
+            }
+
+            const userConfirmed = confirm("Are you sure you want to reload saved courses? This will clear current selections.");
+            if (!userConfirmed) return;
+
+            // Clear existing UI state
+            document.getElementById("dynamic-courses").innerHTML = '';
+            addedCourses.clear();
+            Object.keys(courseSections).forEach(key => delete courseSections[key]);
+            Object.keys(instructorCredits).forEach(key => delete instructorCredits[key]);
+
+            // Reconstruct each course card
+            courses.forEach(({ courseName, instructor, section, year, time }) => {
                 const [courseCode, courseTitle] = courseName.split(' - ');
 
-                // Recreate the course card dynamically
                 const courseCard = document.createElement("div");
                 courseCard.className = "course-card";
                 courseCard.innerHTML = `
@@ -93,127 +382,89 @@ document.getElementById('load-courses').addEventListener('change', (event) => {
                     <input type="hidden" name="students_${section}" value="25">
                 `;
 
-                // Populate the instructor dropdown
                 const instructorDropdown = courseCard.querySelector('.instructor-dropdown');
+                const timeDropdown = courseCard.querySelector('.time-dropdown');
+
                 populateInstructorDropdown(instructorDropdown);
 
-                // Check if the instructor is valid and within credit limits
-                const selectedCourse = courses.find(c => c.Code === courseCode);
-                const courseCredits = selectedCourse ? selectedCourse.credits || 0 : 0; // Default to 0 for custom courses
-                const maxCredits = semester === "Summer" ? 7 : 21; // Determine max credits based on semester
+                setTimeout(() => {
+                    if (instructor && instructorAvailability[instructor]) {
+                        instructorDropdown.value = instructor;
 
-                // Validate the instructor
-                if (!instructorAvailability[instructor]) {
-                    errors.push(`Error: Instructor "${instructor}" is not available for course "${courseName}".`);
-                    instructorDropdown.value = ""; // Clear the instructor dropdown
-                } else {
-                    const currentCredits = instructorCredits[instructor] || 0;
-                    if (currentCredits + courseCredits > maxCredits) {
-                        errors.push(`Error: Instructor "${instructor}" already has ${currentCredits} credits. Adding this course would exceed ${maxCredits}.`);
-                        instructorDropdown.value = ""; // Clear the instructor dropdown
-                    } else {
-                        instructorCredits[instructor] = currentCredits + courseCredits; // Update instructor credits
-                        instructorDropdown.value = instructor; // Set the instructor in the dropdown
+                        // Trigger change event manually to update time dropdown
+                        const changeEvent = new Event('change', { bubbles: true });
+                        instructorDropdown.dispatchEvent(changeEvent);
+
+                        // Set time after short delay
+                        setTimeout(() => {
+                            if (time) timeDropdown.value = time;
+                        }, 50);
                     }
-                }
+                }, 10);
 
-                // Add event listener to update time slots based on instructor availability
                 instructorDropdown.addEventListener('change', (e) => {
                     const selectedInstr = e.target.value;
-                    const timeDropdown = courseCard.querySelector('.time-dropdown');
-
-                    // Clear time dropdown options
-                    timeDropdown.innerHTML = '<option value="">Select Time (Optional)</option>';
-
-                    // Handle credit management
                     const courseInput = courseCard.querySelector('input[name^="courses"]');
                     const courseWithSection = courseInput.value;
-                    const courseCode = courseWithSection.split('_')[0];
-                    const selectedCourse = courses.find(c => c.Code === courseCode);
-                    const courseCredits = selectedCourse ? selectedCourse.credits || 0 : 0; // Default to 0 for custom courses
-                    const newInstr = selectedInstr;
-                    const oldInstr = e.target.dataset.prevInstructor || ''; // Get previous value
+                    const [code] = courseWithSection.split('_');
+                    const selectedCourse = courses.find(c => c.Code === code);
+                    const courseCredits = selectedCourse ? selectedCourse.credits || 0 : 0;
+                    const maxCredits = semester === "Summer" ? 7 : 21;
 
-                    // Handle old instructor's credits
+                    const oldInstr = e.target.dataset.prevInstructor || '';
+                    const newInstr = selectedInstr;
+
+                    timeDropdown.innerHTML = '<option value="">Select Time (Optional)</option>';
+
                     if (oldInstr && oldInstr !== newInstr) {
-                        instructorCredits[oldInstr] = (instructorCredits[oldInstr] || 0) - courseCredits;
-                        if (instructorCredits[oldInstr] <= 0) {
-                            delete instructorCredits[oldInstr];
-                        }
+                        instructorCredits[oldInstr] = Math.max((instructorCredits[oldInstr] || 0) - courseCredits, 0);
+                        if (instructorCredits[oldInstr] <= 0) delete instructorCredits[oldInstr];
                     }
 
-                    // Handle new instructor's credits
                     if (newInstr) {
                         const currentCredits = instructorCredits[newInstr] || 0;
                         if (currentCredits + courseCredits > maxCredits) {
-                            showCustomAlert(`Error: ${newInstr} already has ${currentCredits} credits. Adding this course would exceed ${maxCredits}.`);
-                            e.target.value = oldInstr; // Revert selection
+                            showCustomAlert(`Error: ${newInstr} exceeds credit limit.`);
+                            e.target.value = oldInstr;
                             return;
                         }
                         instructorCredits[newInstr] = currentCredits + courseCredits;
-                    } else {
-                        // If unselecting, subtract old instructor's credits
-                        if (oldInstr) {
-                            instructorCredits[oldInstr] = (instructorCredits[oldInstr] || 0) - courseCredits;
-                            if (instructorCredits[oldInstr] <= 0) {
-                                delete instructorCredits[oldInstr];
-                            }
-                        }
+                    } else if (oldInstr) {
+                        instructorCredits[oldInstr] = Math.max((instructorCredits[oldInstr] || 0) - courseCredits, 0);
+                        if (instructorCredits[oldInstr] <= 0) delete instructorCredits[oldInstr];
                     }
 
-                    // Update stored previous value
                     e.target.dataset.prevInstructor = newInstr;
 
-                    // Populate time slots based on instructor availability
                     if (!selectedInstr) return;
-                    const availability = instructorAvailability[selectedInstr] || [];
-                    console.log(`Instructor ${selectedInstr} availability:`, availability);
 
-                    // Add options for available time slots
-                    timeSlots.forEach((time, index) => {
-                        if (availability.includes(time)) {
+                    const availability = instructorAvailability[selectedInstr] || [];
+                    timeSlots.forEach((slot) => {
+                        if (availability.includes(slot)) {
                             const option = document.createElement('option');
-                            option.value = time;
-                            option.textContent = time;
+                            option.value = slot;
+                            option.textContent = slot;
                             timeDropdown.appendChild(option);
                         }
                     });
                 });
 
-                // Trigger the change event on the instructor dropdown to update time slots
-                const changeEvent = new Event('change', { bubbles: true });
-                instructorDropdown.dispatchEvent(changeEvent);
-
-                // Populate the time dropdown after the time slots are updated
-                setTimeout(() => {
-                    const timeDropdown = courseCard.querySelector('.time-dropdown');
-                    timeDropdown.value = time;
-                }, 100); // Small delay to ensure time slots are updated
-
-                // Append the recreated course card to the #dynamic-courses container
                 document.getElementById("dynamic-courses").appendChild(courseCard);
-
-                // Add the course to the `addedCourses` set and `courseSections` object
                 addedCourses.add(section);
+
                 const [code, letter] = section.split('_');
-                if (!courseSections[code]) {
-                    courseSections[code] = [];
-                }
+                if (!courseSections[code]) courseSections[code] = [];
                 courseSections[code].push(letter);
             });
 
-            // Display any collected errors
-            if (errors.length > 0) {
-                alert(errors.join("\n"));
-            } else {
-                alert('Courses reloaded successfully!');
-            }
+            alert('Courses reloaded successfully!');
+
         } catch (error) {
-            alert('Error loading courses. Please ensure the file is valid.');
+            console.error('Error loading saved courses:', error);
+            alert('Failed to load saved courses. The data may be corrupted.');
         }
-    };
-    reader.readAsText(file);
-});
+    });
+
 </script>
     <!-- Custom Alert Box -->
     <div id="custom-alert">
@@ -249,12 +500,6 @@ document.getElementById('load-courses').addEventListener('change', (event) => {
                 <button type="submit" style="margin-top: 20px;" class="add-instructor-btn">Generate Schedule</button>
             </div>
         </form>
-    </div>
-
-    <!-- Generated Schedule Display -->
-    <div class="card">
-        <h3>Generated Schedule</h3>
-        <pre id="schedule"></pre>
     </div>
     <div class="card">
     <h3>Editable Schedule</h3>
@@ -299,37 +544,28 @@ function populateInstructorFilter() {
     });
 }
 
-// Function to sort rows by time using the timeSlots array
 function sortRowsByTime() {
     const rows = Array.from(document.querySelectorAll("#editable-schedule tbody tr"));
-    let timeSlotsOrder;
 
-    // Determine the timeSlots array based on the semester
-    if (semester === "Summer") {
-        timeSlotsOrder = [
-            "MWTTH 8:00-9:50", "MWTTH 10:00-11:50", "MWTTH 12:00-1:50"
-        ];
-    } else {
-        timeSlotsOrder = [
-            "MW 8:00-9:15 AM", "MW 9:30-10:45 AM", "MW 11:00 AM-12:15 PM",
-            "MW 12:30-1:45 PM", "MW 2:00-3:15 PM", "MW 3:30-4:45 PM",
-            "MW 5:00-6:15 PM", "MW 6:30-8:45 PM",
-            "TTh 8:00-9:15 AM", "TTh 9:30-11:45 AM", "TTh 11:00 AM-12:15 PM",
-            "TTh 12:30-1:45 PM", "TTh 2:00-3:15 PM", "TTh 3:30-4:45 PM",
-            "TTh 5:00-6:15 PM", "TTh 6:30-8:45 PM"
-        ];
-    }
+    // Helper function to extract the start time from a time slot string
+    const extractStartTime = (timeSlot) => {
+        if (!timeSlot) return Infinity; // Handle missing or invalid times
+        const match = timeSlot.match(/(\d{1,2}:\d{2})/);
+        if (!match) return Infinity; // Fallback for invalid formats
+        const [hour, minute] = match[1].split(":").map(Number);
+        return hour * 60 + minute; // Convert to minutes since midnight
+    };
 
-    // Sort rows based on the timeSlots array
+    // Sort rows based on the extracted start time
     rows.sort((rowA, rowB) => {
-        const timeA = rowA.querySelector("td:nth-child(3)").textContent.trim();
-        const timeB = rowB.querySelector("td:nth-child(3)").textContent.trim();
+        const timeA = rowA.querySelector("td:nth-child(6)").textContent.trim(); // STIME column
+        const timeB = rowB.querySelector("td:nth-child(6)").textContent.trim(); // STIME column
 
-        // Handle cases where time is "Automatic" or empty
-        const indexA = timeA && timeSlotsOrder.includes(timeA) ? timeSlotsOrder.indexOf(timeA) : Infinity;
-        const indexB = timeB && timeSlotsOrder.includes(timeB) ? timeSlotsOrder.indexOf(timeB) : Infinity;
+        // Extract start times and compare
+        const startTimeA = extractStartTime(timeA);
+        const startTimeB = extractStartTime(timeB);
 
-        return indexA - indexB;
+        return startTimeA - startTimeB;
     });
 
     // Re-append sorted rows to the table body
@@ -337,6 +573,10 @@ function sortRowsByTime() {
     tableBody.innerHTML = ""; // Clear the table body
     rows.forEach(row => tableBody.appendChild(row)); // Append sorted rows
 }
+// Attach the event listener to the "Sort by Time" button
+document.getElementById("sort-by-time-btn").addEventListener("click", () => {
+    sortRowsByTime();
+});
 
 // Initialize functionality when the DOM is fully loaded
 document.addEventListener("DOMContentLoaded", () => {
@@ -375,18 +615,33 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 </script>
     <table id="editable-schedule" border="1">
-        <thead>
-            <tr>
-                <th>Section</th>
-                <th>Course</th>
-                <th>Time</th>
-                <th>Instructor</th>
-            </tr>
-        </thead>
-        <tbody>
-            <!-- Rows will be dynamically added here -->
-        </tbody>
-    </table>
+   <thead>
+    <tr>
+        <th>#</th>
+        <th>CODE</th>
+        <th>Section</th>
+        <th>FACUSER</th>
+        <th>Room</th>
+        <th>STIME</th>
+        <th>ETIME</th>
+        <th>M</th>
+        <th>T</th>
+        <th>W</th>
+        <th>TH</th>
+        <th>F</th>
+        <th>S</th>
+        <th>Campus</th>
+        <th>University</th>
+        <th class="hidden-column">AllowCross</th>
+        <th class="hidden-column">schedulingType</th>
+        <th class="hidden-column">bypassPayroll</th>
+        <th class="hidden-column">Capacity</th>
+    </tr>
+</thead>
+    <tbody>
+        <!-- Rows will be dynamically added here -->
+    </tbody>
+</table>
     <button id="export-excel-btn" class="add-instructor-btn">Export to Excel</button>
 </div>
     <script>
@@ -467,14 +722,14 @@ document.addEventListener("DOMContentLoaded", () => {
     const selectedOption = dropdown.querySelector(`option[value="${selectedCode}"]`);
     const selectedCourse = courses.find(c => c.Code === selectedCode);
 
-    // If the course is not found in the backend data, treat it as a custom course
-    const courseYear = selectedOption ? selectedOption.getAttribute("data-course-year") : "1"; // Default year
-    const courseCredits = selectedCourse ? selectedCourse.credits || 0 : 0; // Default credits for custom courses
+    // Default values for course year and credits
+    const courseYear = selectedOption ? selectedOption.getAttribute("data-course-year") : "1";
+    const courseCredits = selectedCourse ? selectedCourse.credits || 0 : 0;
 
+    // Find the next available section letter (A-Z)
     let nextLetter = 'A';
     const existingSections = courseSections[selectedCode] || [];
 
-    // Find the next available section letter (A-Z)
     for (let i = 0; i < 26; i++) {
         const candidate = String.fromCharCode(65 + i);
         if (!existingSections.includes(candidate)) {
@@ -483,9 +738,8 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    if (!courseSections[selectedCode]) {
-        courseSections[selectedCode] = [];
-    }
+    // Update course sections
+    if (!courseSections[selectedCode]) courseSections[selectedCode] = [];
     courseSections[selectedCode].push(nextLetter);
 
     const courseWithSection = `${selectedCode}_${nextLetter}`;
@@ -521,7 +775,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const instructorSelect = courseCard.querySelector('.instructor-dropdown');
     populateInstructorDropdown(instructorSelect);
 
-    // Update time slots based on instructor availability
+    // Existing instructor change handler (for time slots and credit logic)
     instructorSelect.addEventListener('change', (e) => {
         const selectedInstr = e.target.value;
         const timeDropdown = courseCard.querySelector('.time-dropdown');
@@ -529,13 +783,13 @@ document.addEventListener("DOMContentLoaded", () => {
         // Clear time dropdown options
         timeDropdown.innerHTML = '<option value="">Select Time (Optional)</option>';
 
-        // New Logic for Credit Management
+        // Handle instructor credit logic
         const courseInput = courseCard.querySelector('input[name^="courses"]');
         const courseWithSection = courseInput.value;
         const courseCode = courseWithSection.split('_')[0];
-        const courseCredits = selectedCourse ? selectedCourse.credits || 0 : 0; // Default to 0 for custom courses
+        const courseCredits = selectedCourse ? selectedCourse.credits || 0 : 0;
         const newInstr = selectedInstr;
-        const oldInstr = e.target.dataset.prevInstructor || ''; // Get previous value
+        const oldInstr = e.target.dataset.prevInstructor || '';
 
         // Handle old instructor's credits
         if (oldInstr && oldInstr !== newInstr) {
@@ -546,27 +800,19 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         // Determine max credits based on semester
-const isSummerSemester = semester === "Summer"; // Use the existing `semester` variable
-const maxCredits = isSummerSemester ? 7 : 21;
+        const isSummerSemester = semester === "Summer";
+        const maxCredits = isSummerSemester ? 7 : 21;
 
-// Handle new instructor's credits
-if (newInstr) {
-    const currentCredits = instructorCredits[newInstr] || 0;
-    if (currentCredits + courseCredits > maxCredits) {
-        showCustomAlert(`Error: ${newInstr} already has ${currentCredits} credits. Adding this course would exceed ${maxCredits}.`);
-        e.target.value = oldInstr; // Revert selection
-        return;
-    }
-    instructorCredits[newInstr] = currentCredits + courseCredits;
-} else {
-    // If unselecting, subtract old instructor's credits
-    if (oldInstr) {
-        instructorCredits[oldInstr] = (instructorCredits[oldInstr] || 0) - courseCredits;
-        if (instructorCredits[oldInstr] <= 0) {
-            delete instructorCredits[oldInstr];
+        // Handle new instructor's credits
+        if (newInstr) {
+            const currentCredits = instructorCredits[newInstr] || 0;
+            if (currentCredits + courseCredits > maxCredits) {
+                showCustomAlert(`Error: ${newInstr} already has ${currentCredits} credits. Adding this course would exceed ${maxCredits}.`);
+                e.target.value = oldInstr;
+                return;
+            }
+            instructorCredits[newInstr] = currentCredits + courseCredits;
         }
-    }
-}
 
         // Update stored previous value
         e.target.dataset.prevInstructor = newInstr;
@@ -574,9 +820,7 @@ if (newInstr) {
         // Populate time slots based on instructor availability
         if (!selectedInstr) return;
         const availability = instructorAvailability[selectedInstr] || [];
-        console.log(`Instructor ${selectedInstr} availability:`, availability);
 
-        // Add options for available time slots
         timeSlots.forEach((time, index) => {
             if (availability.includes(time)) {
                 const option = document.createElement('option');
@@ -585,8 +829,19 @@ if (newInstr) {
                 timeDropdown.appendChild(option);
             }
         });
+
+        // Save after handling instructor logic
+        saveCourses(true);
     });
 
+    // ✅ Attach save listener to all dropdowns in the course card
+    courseCard.querySelectorAll('select').forEach(dropdown => {
+        dropdown.addEventListener('change', () => {
+            saveCourses(true);
+        });
+    });
+
+    // Append the new course card to the DOM
     document.getElementById("dynamic-courses").appendChild(courseCard);
 });
 </script>
@@ -665,46 +920,324 @@ for (const [instrId, totalCredits] of Object.entries(instructorCredits)) {
         if (result.error) {
             showCustomAlert(`Error: ${result.error}`);
         } else {
-            document.getElementById("schedule").textContent = formatSchedule(result);
+            try{
+                document.getElementById("schedule").textContent = formatSchedule(result);
+            }
+            catch (error){
+                console.log("");
+            }
         }
     } catch (error) {
         showCustomAlert(`Network Error: ${error.message}`);
     }
 });
 </script>
-    <script>
-    // Function to format the schedule output
-   function formatSchedule(data) {
+<script>
+    function formatSchedule(data) {
+    if (semester === "Summer") {
+        return formatSummerSchedule(data);
+    } else {
+        return formatRegularSchedule(data);
+    }
+}
+function formatSummerSchedule(data) {
     let text = "";
     const tableBody = document.querySelector("#editable-schedule tbody");
     tableBody.innerHTML = ""; // Clear previous rows
+    const campusCode = data.campus_code || document.querySelector('input[name="campus_code"]').value || "DEFAULT_CAMPUS_CODE";
 
     for (const section in data) {
         if (section === "completion_time") continue;
+
         const [courseCode, sectionLetter] = section.split("_");
         const course = courses.find(c => c.Code === courseCode);
+        const rawTime = data[section].time || 'Automatic';
+        const instructor = data[section].instructor || 'TBA';
 
-        // Add row to the editable schedule table
+        // Parse time using the summer-specific logic
+        const parsedTime = parseSummerTime(rawTime);
+        const stimeTime = parsedTime.stime;
+        const etimeTime = parsedTime.etime;
+
+        // Parse days of the week
+        const daysOfWeek = {
+            M: 0,
+            T: 0,
+            W: 0,
+            TH: 0,
+            F: 0,
+            S: 0
+        };
+
+        const days = rawTime.split(' ')[0]; // Extract days (e.g., "MWTTH")
+        if (days) {
+            if (days.includes('M')) daysOfWeek.M = 1;
+            if (days.includes('T')) {
+                daysOfWeek.T = 1; // Tuesday
+                if (days.includes('TH')) daysOfWeek.TH = 1; // Thursday
+            } else if (days.includes('TH')) {
+                daysOfWeek.TH = 1; // Handle standalone "TH"
+            }
+            if (days.includes('W')) daysOfWeek.W = 1;
+            if (days.includes('F')) daysOfWeek.F = 1;
+            if (days.includes('S')) daysOfWeek.S = 1;
+        }
+
+        // Check if the course code contains "L" and set M and W to 0
+        if (courseCode.includes("L")) {
+            daysOfWeek.M = 0;
+            daysOfWeek.W = 0;
+        }
+
+        // Create table row
         const row = document.createElement("tr");
         row.innerHTML = `
-            <td>${section}</td>
-            <td>${course ? course.Title : 'Unknown'}</td>
-            <td contenteditable="true">${data[section].time || 'Automatic'}</td>
-            <td contenteditable="true">${data[section].instructor}</td>
+            <td contenteditable="true">1</td>
+            <td contenteditable="true">${courseCode}</td>
+            <td contenteditable="true">${sectionLetter}</td>
+            <td contenteditable="true">${instructor}</td>
+            <td contenteditable="true">TBD</td>
+            <td contenteditable="true">${stimeTime}</td>
+            <td contenteditable="true">${etimeTime}</td>
+            <td contenteditable="true">${daysOfWeek.M}</td>
+            <td contenteditable="true">${daysOfWeek.T}</td>
+            <td contenteditable="true">${daysOfWeek.W}</td>
+            <td contenteditable="true">${daysOfWeek.TH}</td>
+            <td contenteditable="true">${daysOfWeek.F}</td>
+            <td contenteditable="true">${daysOfWeek.S}</td>
+            <td contenteditable="true">${campusCode}</td>
+            <td contenteditable="true">1</td>
+            <td contenteditable="true" class="hidden-column">0</td>
+            <td contenteditable="true" class="hidden-column">Normal</td>
+            <td contenteditable="true" class="hidden-column">No</td>
+            <td contenteditable="true" class="hidden-column">30</td>
         `;
         tableBody.appendChild(row);
 
-        // Append to the formatted text
+        // Logging for debugging
         text += `Section ${section}:
-Course: ${course ? course.Title : 'Unknown'}
-Time: ${data[section].time || 'Automatic'}
-Instructor: ${data[section].instructor}
-`;
+        Time: ${stimeTime} - ${etimeTime}
+        `;
     }
-    text += `Schedule completes by ${data.completion_time}.`;
+    return text;
+}function formatRegularSchedule(data) {
+    let text = "";
+    const tableBody = document.querySelector("#editable-schedule tbody");
+    tableBody.innerHTML = ""; // Clear previous rows
+    const campusCode = data.campus_code || document.querySelector('input[name="campus_code"]').value || "DEFAULT_CAMPUS_CODE";
+
+    const allSectionsData = [];
+
+    // Phase 1: Collect all section data with uppercase days for consistency
+    for (const section in data) {
+        if (section === "completion_time") continue;
+
+        const [courseCode, sectionLetter] = section.split("_");
+        const course = courses.find(c => c.Code === courseCode);
+        const rawTime = data[section].time || 'Automatic';
+        const instructor = data[section].instructor || 'TBA';
+
+        // Parse time (same as before, unchanged)
+        let stimeTime, etimeTime;
+        const timePortion = rawTime.split(' ').slice(1).join(' ');
+        const timeMatch = timePortion.match(/(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})\s*([AP]M)/i);
+        if (timeMatch) {
+            stimeTime = convertTo24Hour(`${timeMatch[1]} ${timeMatch[3]}`).trim();
+            etimeTime = convertTo24Hour(`${timeMatch[2]} ${timeMatch[3]}`).trim();
+        } else {
+            const altMatch = timePortion.match(/(\d{1,2}:\d{2}\s*[AP]M)\s*-\s*(\d{1,2}:\d{2}\s*[AP]M)/i);
+            if (altMatch) {
+                stimeTime = convertTo24Hour(altMatch[1].trim());
+                etimeTime = convertTo24Hour(altMatch[2].trim());
+            } else {
+                console.error(`[ERROR] Failed to parse time for section: ${section}, rawTime: ${rawTime}`);
+                continue;
+            }
+        }
+
+        // Process days to uppercase and store
+        const daysStr = (rawTime.split(' ')[0] || '').toUpperCase(); // Uppercase for consistency
+        const isLab = courseCode.endsWith('L');
+
+        allSectionsData.push({
+            courseCode,
+            sectionLetter,
+            instructor,
+            rawTime,
+            stimeTime,
+            etimeTime,
+            daysStr: daysStr,
+            isLab: isLab,
+            assignedDays: daysStr // Default to original days unless changed
+        });
+    }
+
+    // Phase 2: Group and assign days for labs
+    const labSections = allSectionsData.filter(sd => sd.isLab);
+    const labGroups = {};
+
+    // Group labs by time, days, and instructor (using uppercase days)
+    labSections.forEach(lab => {
+        const groupKey = `${lab.stimeTime}-${lab.etimeTime}-${lab.daysStr}-${lab.instructor}`;
+        if (!labGroups[groupKey]) labGroups[groupKey] = [];
+        labGroups[groupKey].push(lab);
+    });
+
+    // Assign individual days within each group
+    Object.values(labGroups).forEach(group => {
+        const daysStr = group[0].daysStr;
+        const days = parseDays(daysStr); // Helper function to split days into array
+        const numDays = days.length;
+
+        group.forEach((lab, index) => {
+            const dayIndex = index % numDays;
+            lab.assignedDays = days[dayIndex]; // Assign a single day from the days array
+        });
+    });
+
+    // Phase 3: Build table rows with corrected days
+    for (const sectionData of allSectionsData) {
+        const daysToShow = sectionData.isLab ? sectionData.assignedDays : sectionData.daysStr;
+
+        // Parse days into day flags (M, T, W, TH, F, S)
+        const daysOfWeek = { M: 0, T: 0, W: 0, TH: 0, F: 0, S: 0 };
+        const parsedDays = parseDays(daysToShow);
+        parsedDays.forEach(day => {
+            switch (day) {
+                case 'M': daysOfWeek.M = 1; break;
+                case 'T': daysOfWeek.T = 1; break;
+                case 'W': daysOfWeek.W = 1; break;
+                case 'TH': daysOfWeek.TH = 1; break;
+                case 'F': daysOfWeek.F = 1; break;
+                case 'S': daysOfWeek.S = 1; break;
+            }
+        });
+
+        // Create table row
+        const row = document.createElement("tr");
+        row.innerHTML = `
+            <td>1</td>
+            <td>${sectionData.courseCode}</td>
+            <td>${sectionData.sectionLetter}</td>
+            <td>${sectionData.instructor}</td>
+            <td>TBD</td>
+            <td>${sectionData.stimeTime}</td>
+            <td>${sectionData.etimeTime}</td>
+            <td>${daysOfWeek.M}</td>
+            <td>${daysOfWeek.T}</td>
+            <td>${daysOfWeek.W}</td>
+            <td>${daysOfWeek.TH}</td>
+            <td>${daysOfWeek.F}</td>
+            <td>${daysOfWeek.S}</td>
+            <td>${campusCode}</td>
+            <td>1</td>
+            <td class="hidden-column">0</td>
+            <td class="hidden-column">Normal</td>
+            <td class="hidden-column">No</td>
+            <td class="hidden-column">30</td>
+        `;
+        tableBody.appendChild(row);
+
+        // Logging for debugging
+        text += `Section ${sectionData.courseCode}_${sectionData.sectionLetter}:
+        Time: ${sectionData.stimeTime} - ${sectionData.etimeTime}
+        Days: ${daysToShow}
+        `;
+    }
+
     return text;
 }
 
+// Helper function to parse days string into an array of day codes
+function parseDays(daysStr) {
+    const days = [];
+    let i = 0;
+    while (i < daysStr.length) {
+        if (i + 1 < daysStr.length && daysStr[i] === 'T' && daysStr[i + 1] === 'H') {
+            days.push('TH');
+            i += 2;
+        } else {
+            days.push(daysStr[i]);
+            i += 1;
+        }
+    }
+    return days;
+}
+function convertTo24Hour(timeStr) {
+    console.log("[DEBUG] Converting time to 24-hour format. Input:", timeStr);
+
+    // Handle summer format (no AM/PM)
+    if (!timeStr.includes('AM') && !timeStr.includes('PM')) {
+        const [hourStr, minute] = timeStr.split(':');
+        let hourInt = parseInt(hourStr, 10);
+
+        // Assume times with single-digit hours (less than 8) are PM
+        if (hourInt < 8) {
+            hourInt += 12; // Convert to PM by adding 12 hours
+        }
+
+        // Format the hour with leading zeros
+        const hour24 = String(hourInt).padStart(2, '0');
+        return `${hour24}:${minute}`;
+    }
+
+    // Handle regular semester format (with AM/PM)
+    const parts = timeStr.trim().split(/\s+/);
+    if (parts.length < 2) {
+        console.error("Invalid time format:", timeStr);
+        return '';
+    }
+
+    const timePart = parts[0];
+    const period = parts[1].toUpperCase();
+    const [hourStr, minute] = timePart.split(':');
+    let hourInt = parseInt(hourStr, 10);
+
+    // Adjust hour based on AM/PM
+    if (period === "PM" && hourInt !== 12) {
+        hourInt += 12;
+    } else if (period === "AM" && hourInt === 12) {
+        hourInt = 0;
+    }
+
+    // Format the hour with leading zeros
+    const hour24 = String(hourInt).padStart(2, '0');
+    return `${hour24}:${minute}`;
+}
+function parseSummerTime(rawTime) {
+    console.log("[DEBUG] Parsing summer time. Input:", rawTime);
+
+    // Extract the time portion (everything after the days)
+    const timePortion = rawTime.split(' ').slice(1).join(' ');
+
+    // Split the time range into start and end times
+    const [startTime, endTime] = timePortion.split('-').map(t => t.trim());
+
+    // Helper function to convert a single time to 24-hour format
+    const convertTo24Hour = (time) => {
+        const [hourStr, minute] = time.split(':');
+        let hourInt = parseInt(hourStr, 10);
+
+        // Assume times with single-digit hours (less than 8) are PM
+        if (hourInt < 8) {
+            hourInt += 12; // Convert to PM by adding 12 hours
+        }
+
+        // Format the hour with leading zeros
+        const hour24 = String(hourInt).padStart(2, '0');
+        return `${hour24}:${minute}`;
+    };
+
+    // Parse start and end times
+    const stime = convertTo24Hour(startTime);
+    const etime = convertTo24Hour(endTime);
+
+    // Return parsed times
+    return {
+        stime,
+        etime
+    };
+}
     function showCustomAlert(message, duration = 5000) {
     const alertBox = document.getElementById('custom-alert');
     const messageElement = alertBox.querySelector('.message');
@@ -777,6 +1310,7 @@ function removeCourse(courseWithSection) {
 
     // Remove the course card from the DOM
     courseCard.remove();
+    saveCourses(silent=true);
 }
 </script>
 
@@ -827,30 +1361,71 @@ function removeCourse(courseWithSection) {
 
 </style>
 <script>
-    document.getElementById("export-excel-btn").addEventListener("click", () => {
+document.getElementById("export-excel-btn").addEventListener("click", () => {
     const table = document.getElementById("editable-schedule");
     const rows = table.querySelectorAll("tr");
-    let csvContent = "data:text/csv;charset=utf-8,";
 
-    // Extract headers
-    const headers = Array.from(rows[0].querySelectorAll("th")).map(th => th.innerText);
-    csvContent += headers.join(",") + "\n";
-
-    // Extract rows
-    for (let i = 1; i < rows.length; i++) {
-        const cells = rows[i].querySelectorAll("td");
-        const rowData = Array.from(cells).map(cell => cell.innerText);
-        csvContent += rowData.join(",") + "\n";
+    // Check if the table has rows
+    if (rows.length <= 1) {
+        alert("The table is empty. Please add data before exporting.");
+        return;
     }
 
-    // Create and download the CSV file
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", "schedule.csv");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    // Extract headers
+    const headers = Array.from(rows[0].querySelectorAll("th"))
+        .map(th => th.textContent.trim());
+
+    // Extract data rows
+    const data = [];
+    for (let i = 1; i < rows.length; i++) {
+        const cells = rows[i].querySelectorAll("td");
+        const rowData = Array.from(cells)
+            .map(cell => cell.textContent.trim());
+        data.push(rowData);
+    }
+
+    // Create a worksheet
+    const worksheet = XLSX.utils.json_to_sheet([headers, ...data], { skipHeader: true });
+
+    // Add grey background style to headers
+    const headerStyle = {
+        fill: { fgColor: { rgb: "D3D3D3" } }, // Grey background color
+        font: { bold: true }, // Bold text for headers
+        alignment: { horizontal: "center" } // Center-align headers
+    };
+
+    // Apply styles to the header row
+    for (let colIndex = 0; colIndex < headers.length; colIndex++) {
+        const cellAddress = XLSX.utils.encode_cell({ r: 0, c: colIndex });
+        if (!worksheet[cellAddress]) continue;
+
+        worksheet[cellAddress].s = headerStyle;
+    }
+
+    // Auto-fit column widths
+    const columnWidths = headers.map((header, index) => {
+        // Calculate the maximum length of content in the column
+        const maxLength = Math.max(
+            header.length, // Include header length
+            ...data.map(row => row[index]?.length || 0) // Include data lengths
+        );
+        return { wch: maxLength + 2 }; // Add padding (2 characters)
+    });
+
+    // Apply column widths to the worksheet
+    worksheet["!cols"] = columnWidths;
+
+    // Create a workbook and append the worksheet
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Schedule");
+
+    // Export the workbook as an Excel file
+    XLSX.writeFile(workbook, "schedule.xlsx");
 });
 </script>
+<style>
+    .hidden-column {
+    display: none;
+}
+</style>
 </html>

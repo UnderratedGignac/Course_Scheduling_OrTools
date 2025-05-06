@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Insert an Instructor</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+        }
+        .navbar {
+            background-color: #28a745;
+            color: white;
+            padding: 10px 0;
+            text-align: center;
+        }
+        .navbar button {
+            background-color: transparent;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            cursor: pointer;
+        }
+        .navbar button:hover {
+            background-color: #218838;
+        }
+        .form-container {
+            width: 50%;
+            margin: 50px auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 5px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        .form-group select {
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5.78 10.22a.75.75 0 0 0 1.06 0l4.25-4.25a.75.75 0 0 0-1.06-1.06L8.22 8.94H5.78a.75.75 0 0 0 0 1.56l2.63 2.63a.75.75 0 0 0 1.06 0z' fill='%23333'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 8px center;
+            background-size: 12px 12px;
+        }
+        .submit-btn {
+            background-color: #28a745;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .submit-btn:hover {
+            background-color: #218838;
+        }
+        .message {
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            display: none;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            position: relative;
+            padding-left: 45px;
+            font-weight: 500;
+            animation: fadeIn 0.5s ease-in-out;
+        }
+
+        .error-message {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .success-message {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .error-message::before {
+            content: "⚠️";
+            position: absolute;
+            left: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 20px;
+        }
+
+        .success-message::before {
+            content: "✅";
+            position: absolute;
+            left: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <button onclick="window.location.href='/insert_course'">Insert Course</button>
+        <button onclick="window.location.href='/index'">Home</button>
+        <button onclick="window.location.href='/select-faculty'">School Selection</button>
+    </div>
+    <h1>Insert an Instructor</h1>
+    <div class="form-container">
+        <div id="error-message" class="message error-message">
+            <span id="error-text"></span>
+            <button id="close-error" style="position: absolute; right: 10px; top: 10px; background: none; border: none; color: #721c24; cursor: pointer; font-size: 16px;">×</button>
+        </div>
+        <div id="success-message" class="message success-message">
+            <span id="success-text">Instructor added successfully!</span>
+            <button id="close-success" style="position: absolute; right: 10px; top: 10px; background: none; border: none; color: #155724; cursor: pointer; font-size: 16px;">×</button>
+        </div>
+        <form id="instructor-form" action="/save_instructor" method="POST">
+            <div class="form-group">
+                <label for="facuser">Faculty User</label>
+                <input type="text" id="facuser" name="facuser" required placeholder="Enter Faculty User">
+            </div>
+            <div class="form-group">
+                <label for="fname">First Name</label>
+                <input type="text" id="fname" name="fname" required placeholder="Enter First Name">
+            </div>
+            <div class="form-group">
+                <label for="mname">Middle Name</label>
+                <input type="text" id="mname" name="mname" placeholder="Enter Middle Name (Optional)">
+            </div>
+            <div class="form-group">
+                <label for="lname">Last Name</label>
+                <input type="text" id="lname" name="lname" required placeholder="Enter Last Name">
+            </div>
+            <div class="form-group">
+                <label for="accountEmail">Account Email</label>
+                <input type="email" id="accountEmail" name="accountEmail" placeholder="Enter Account Email">
+                <small>(Default: tba.instructor@liu.edu.lb if left empty)</small>
+            </div>
+            <div class="form-group">
+                <label for="title">Title</label>
+                <select id="title" name="title" required>
+                    <option value="">Select Title</option>
+                    <option value="Dr.">Dr.</option>
+                    <option value="Miss.">Miss.</option>
+                    <option value="Mr.">Mr.</option>
+                    <option value="Mrs.">Mrs.</option>
+                </select>
+            </div>
+            <div class="form-group">
+    <label for="schlCode">School Code</label>
+    <select id="schlCode" name="schlCode" required>
+        <option value="">Select School Code</option>
+        {% for school in schools %}
+        <option value="{{ school.school_code }}">{{ school.school_code }}</option>
+        {% endfor %}
+    </select>
+</div>
+<div class="form-group">
+    <label for="fac_code">Faculty Code</label>
+    <select id="fac_code" name="fac_code" required>
+        <option value="">Select Faculty Code</option>
+    </select>
+</div>
+           <div class="form-group">
+    <label for="campusID">Campus</label>
+    <select id="campusID" name="campusID" required>
+        <option value="">Select Campus</option>
+        {% for campus in campuses %}
+        <option value="{{ campus.campus_code }}">{{ campus.campus_code }} - {{ campus.location }}</option>
+        {% endfor %}
+    </select>
+</div>
+            <div class="form-group">
+                <label for="active">Active</label>
+                <select id="active" name="active" required>
+                    <option value="">Select Status</option>
+                    <option value="Yes">Yes</option>
+                    <option value="No">No</option>
+                </select>
+            </div>
+            <button type="submit" class="submit-btn">Submit</button>
+        </form>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const form = document.getElementById('instructor-form');
+            const errorMessage = document.getElementById('error-message');
+            const errorText = document.getElementById('error-text');
+            const closeError = document.getElementById('close-error');
+            const successMessage = document.getElementById('success-message');
+            const successText = document.getElementById('success-text');
+            const closeSuccess = document.getElementById('close-success');
+            const facuserInput = document.getElementById('facuser');
+
+            // Add event listener to close buttons
+            closeError.addEventListener('click', function() {
+                errorMessage.style.display = 'none';
+            });
+
+            closeSuccess.addEventListener('click', function() {
+                successMessage.style.display = 'none';
+            });
+
+            form.addEventListener('submit', function(e) {
+    e.preventDefault();
+
+    // Clear any previous messages and styling
+    errorMessage.style.display = 'none';
+    successMessage.style.display = 'none';
+    errorText.textContent = '';
+    facuserInput.style.border = '1px solid #ccc';
+
+    const facuser = facuserInput.value.trim();
+
+    if (!facuser) {
+        errorText.textContent = "Faculty User is required.";
+        errorMessage.style.display = 'block';
+        facuserInput.focus();
+        return;
+    }
+
+    // Check if facuser already exists
+    fetch(`/check_facuser?facuser=${encodeURIComponent(facuser)}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.exists) {
+                errorText.textContent = "This Faculty User already exists. Please change the Faculty User .";
+                errorMessage.style.display = 'block';
+                facuserInput.style.border = '2px solid #dc3545';
+                facuserInput.focus();
+                return;
+            } else {
+                // No duplicate found — proceed with form submission
+                const formData = new FormData(form);
+                fetch('/save_instructor', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => {
+                    if (response.ok) {
+                        successMessage.style.display = 'block';
+                        form.reset();
+                        window.scrollTo({
+                            top: form.offsetTop - 20,
+                            behavior: 'smooth'
+                        });
+                        setTimeout(() => successMessage.style.display = 'none', 5000);
+                    } else {
+                        return response.json().then(data => {
+                            throw new Error(data.error || 'An unknown error occurred');
+                        });
+                    }
+                })
+                .catch(error => {
+                    errorText.textContent = error.message;
+                    errorMessage.style.display = 'block';
+                    window.scrollTo({
+                        top: form.offsetTop - 20,
+                        behavior: 'smooth'
+                    });
+                });
+            }
+        })
+        .catch(error => {
+            console.error("Error checking facuser:", error);
+            errorText.textContent = "Unable to validate Faculty User. Please try again later.";
+            errorMessage.style.display = 'block';
+            window.scrollTo({
+                top: form.offsetTop - 20,
+                behavior: 'smooth'
+            });
+        });
+});})
+    </script>
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+    const schlCodeSelect = document.getElementById('schlCode');
+    const facCodeSelect = document.getElementById('fac_code');
+
+    function loadFacultiesBySchool(schlCode) {
+        if (!schlCode) {
+            facCodeSelect.innerHTML = '<option value="">Select Faculty Code</option>';
+            return;
+        }
+
+        fetch(`/get_faculties_by_school?schlCode=${schlCode}`)
+            .then(response => {
+                if (!response.ok) throw new Error("Network response was not ok");
+                return response.json();
+            })
+            .then(data => {
+                facCodeSelect.innerHTML = '<option value="">Select Faculty Code</option>';
+                data.forEach(facCode => {
+                    const option = document.createElement('option');
+                    option.value = facCode;
+                    option.textContent = facCode;
+                    facCodeSelect.appendChild(option);
+                });
+            })
+            .catch(error => {
+                console.error("Error fetching faculty codes:", error);
+                facCodeSelect.innerHTML = '<option value="">Error loading</option>';
+            });
+    }
+
+    schlCodeSelect.addEventListener('change', function () {
+        const selectedSchlCode = this.value;
+        loadFacultiesBySchool(selectedSchlCode);
+    });
+});
+</script>
+</body>
+</html>

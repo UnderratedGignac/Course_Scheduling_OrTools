@@ -29,6 +29,26 @@
     </div>
     <div class="card">
         <form id="availability-form" method="POST" action="/save_availability">
+            <!-- Move search bar here -->
+    <input type="text" id="instructorSearch" placeholder="Search instructors..." style="width: 100%; padding: 8px; margin: 10px 0; box-sizing: border-box;">
+    <script>
+        // Improved search functionality to preserve layout
+document.getElementById('instructorSearch').addEventListener('input', function () {
+    const searchTerm = this.value.trim().toLowerCase();
+    const instructorGrids = document.querySelectorAll('.availability-grid');
+
+    instructorGrids.forEach(grid => {
+        const name = grid.querySelector('h4').textContent.trim().toLowerCase();
+        if (name.includes(searchTerm)) {
+            grid.style.visibility = 'visible';
+            grid.style.position = 'relative';
+        } else {
+            grid.style.visibility = 'hidden';
+            grid.style.position = 'absolute';
+        }
+    });
+});
+    </script>
             <!-- Hidden Fields -->
             <input type="hidden" name="school_code" value="{{ school_code }}">
             <input type="hidden" name="campus_code" value="{{ campus_code }}">

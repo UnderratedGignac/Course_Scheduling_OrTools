@@ -45,7 +45,7 @@ def get_courses_by_school(school_code):
         cursor = connection.cursor()
 
         # Modify the query to include the 'credits' column
-        query = "SELECT Code, Title, course_year, credits FROM Course WHERE fac_code = ?"
+        query = "SELECT Code, Title, course_year, credits, Capcity FROM Course WHERE fac_code = ?"
         cursor.execute(query, school_code)
         rows = cursor.fetchall()
         connection.close()
@@ -55,8 +55,9 @@ def get_courses_by_school(school_code):
             {
                 "Code": row[0],
                 "Title": row[1],
-                "course_year": map_course_year_to_numeric(row[2]),  # Map course_year to numeric value
-                "credits": row[3]  # Include credits in the result
+                "course_year": map_course_year_to_numeric(row[2]),
+                "credits": row[3],
+                "capacity": row[4]  # Add capacity to the result
             }
             for row in rows
         ]
@@ -117,7 +118,6 @@ def get_schools_from_db():
             f"UID={DB_CONFIG['username']};"
             f"PWD={DB_CONFIG['password']};"
         )
-        print("Connecting to database to fetch schools.")
         connection = pyodbc.connect(conn_string)
         cursor = connection.cursor()
         query = "SELECT DISTINCT fac_code FROM Instructor"
@@ -134,7 +134,7 @@ def get_schools_from_db():
         return []
 
 def get_instructors_by_school(school_code):
-    """Fetch instructors from the database based on the selected school's fac_code."""
+    """Fetch instructors from the database based on the selected school's fac_code where Active = 1."""
     try:
         conn_string = (
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
@@ -147,16 +147,17 @@ def get_instructors_by_school(school_code):
         connection = pyodbc.connect(conn_string)
         cursor = connection.cursor()
         query = """
-            SELECT facuser, title, fname, mname, lname, accountEmail, Division, fac_code, InstructorID
+            SELECT facuser, title, fname, mname, lname, accountEmail, Division, fac_code
             FROM Instructor 
-            WHERE fac_code = ?
+            WHERE fac_code = ? AND Active = 1
         """
         print(f"Executing query: {query} with param: {school_code}")
         cursor.execute(query, school_code)
         rows = cursor.fetchall()
-        print(f"Fetched {len(rows)} instructors from the database.")
+        print(f"Fetched {len(rows)} ACTIVE instructors from the database.")
         cursor.close()
         connection.close()
+
         instructors_list = [
             {
                 "identifier": row[0],
@@ -168,7 +169,6 @@ def get_instructors_by_school(school_code):
                 "accountEmail": row[5],
                 "Division": row[6],
                 "fac_code": row[7],
-                "InstructorID": row[8]
             }
             for row in rows
         ]
@@ -282,10 +282,9 @@ def get_instructors_by_campus(campus_code, school_code):
         connection = pyodbc.connect(conn_string)
         cursor = connection.cursor()
         query = """
-            SELECT ci.facuser, i.fac_code, ci.campusID
-            FROM Campus_Instructors ci
-            INNER JOIN Instructor i ON ci.facuser = i.facuser
-            WHERE ci.campusID = ? AND i.fac_code = ?
+            SELECT facuser, fac_code, campusID
+            FROM Instructor
+            WHERE campusID = ? AND fac_code = ?
         """
         print(f"Executing query: {query} with params: {campus_code}, {school_code}")
         cursor.execute(query, campus_code, school_code)
@@ -322,6 +321,7 @@ def generate_summer_schedule():
         instructor_assignments = {}
         course_years = {}
         fixed_times = {}
+        course_semesters = {}  # FIXED: Added initialization here
 
         # Retrieve school_code and campus_code from hidden fields
         school_code = request.form.get("school_code")
@@ -352,6 +352,8 @@ def generate_summer_schedule():
             num_students = int(request.form[f"students_{course_with_section}"])
             instructor = request.form[f"instructor_{course_with_section}"]
             year = int(request.form[f"year_{course_with_section}"])
+            semester = get_semester(base_course)
+            course_semesters[course_with_section] = semester  # This line now works
 
             # Check if the course is a lab course based on its title
             is_lab_course = "lab" in base_course.lower()  # Case-insensitive check
@@ -415,22 +417,30 @@ def generate_summer_schedule():
             penalty_vars = []
 
         # Add conflict constraints
+        # Inside the loop over course pairs (i and j):
         for i in range(len(all_sections)):
             for j in range(i + 1, len(all_sections)):
                 s1 = all_sections[i]
                 s2 = all_sections[j]
 
-                # Same instructor constraint (hard constraint)
+                # Existing same instructor constraint (hard constraint)
                 if instructor_assignments[s1] == instructor_assignments[s2]:
                     model.Add(slot_vars[s1] != slot_vars[s2])
 
-                # Same year but different course: add soft penalty instead of hard constraint
-                if course_years[s1] == course_years[s2] and s1.split("_")[0] != s2.split("_")[0]:
-                    # Create a boolean variable indicating if they are in the same slot
-                    same_slot = model.NewBoolVar(f'same_{s1}_{s2}')
-                    model.Add(slot_vars[s1] == slot_vars[s2]).OnlyEnforceIf(same_slot)
-                    model.Add(slot_vars[s1] != slot_vars[s2]).OnlyEnforceIf(same_slot.Not())
-                    penalty_vars.append(same_slot)
+                # Check same year and different courses
+                if (course_years[s1] == course_years[s2] and
+                        s1.split("_")[0] != s2.split("_")[0]):
+
+                    # Get semesters of the two courses
+                    sem1 = course_semesters[s1]
+                    sem2 = course_semesters[s2]
+
+                    if sem1 == sem2:  # Same semester → add penalty
+                        same_slot = model.NewBoolVar(f'same_{s1}_{s2}')
+                        model.Add(slot_vars[s1] == slot_vars[s2]).OnlyEnforceIf(same_slot)
+                        model.Add(slot_vars[s1] != slot_vars[s2]).OnlyEnforceIf(same_slot.Not())
+                        penalty_vars.append(same_slot)
+                    # Else: Different semesters → no penalty (allowed to overlap)
 
         # Calculate total penalty for same-year conflicts
         total_penalty = model.NewIntVar(0, len(penalty_vars), 'total_penalty')
@@ -531,14 +541,14 @@ def schedule_handler():
         if semester.lower() == "summer":
             return generate_summer_schedule()
         else:
-            return generate_schedule()
+            return generate_relaxed_schedule()
 
     except Exception as e:
         # Log and return any errors
         print(f"Error: {e}")
         return jsonify({"error": str(e)}), 500
 
-def generate_schedule():
+'''def generate_schedule():
     try:
         # Log received form data for debugging
         print("Received Form Data:", dict(request.form))
@@ -830,9 +840,375 @@ def generate_schedule():
     except Exception as e:
         # Log and return any errors
         print(f"Error: {e}")
+        # Attempt to generate a relaxed schedule as a fallback
+        print("Attempting to generate a relaxed schedule...")
+        relaxed_schedule_response = generate_relaxed_schedule()
+
+        # Check if the response is a tuple (common in Flask when returning JSON + status code)
+        if isinstance(relaxed_schedule_response, tuple):
+            relaxed_schedule, status_code = relaxed_schedule_response  # Unpack the tuple
+        else:
+            relaxed_schedule, status_code = relaxed_schedule_response, 200  # Assume success if not a tuple
+
+        # If the relaxed schedule was successfully generated, return it
+        if status_code == 200:
+            print("Relaxed schedule generated successfully.")
+            return relaxed_schedule  # Return the relaxed schedule
+        else:
+            # If both methods fail, return the original error and the relaxed schedule error
+            relaxed_error = relaxed_schedule.json.get("error", "Unknown error in relaxed schedule.") if hasattr(
+                relaxed_schedule, "json") else "Unknown error"
+            return jsonify({"error": str(e), "relaxed_error": relaxed_error}), 500
+'''
+
+def get_prerequisites(selected_courses):
+    """
+    Fetch prerequisite relationships involving any of the selected courses.
+
+    Args:
+        selected_courses (list): List of base course codes (e.g., ["CSCI200", "CSCI250"]).
+
+    Returns:
+        defaultdict(list): A dictionary mapping course codes to their prerequisites.
+    """
+    try:
+        conn_string = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={DB_CONFIG['server']};"
+            f"DATABASE={DB_CONFIG['database']};"
+            f"UID={DB_CONFIG['username']};"
+            f"PWD={DB_CONFIG['password']};"
+        )
+        print("Connecting to database to fetch filtered prerequisites.")
+
+        connection = pyodbc.connect(conn_string)
+        cursor = connection.cursor()
+
+        # Build dynamic SQL query for filtering
+        placeholder = ','.join('?' for _ in selected_courses)
+        query = f"""
+            SELECT Code, Pre_requisites
+            FROM offeringsDB.dbo.pre_requisites
+            WHERE Code IN ({placeholder}) OR Pre_requisites IN ({placeholder})
+        """
+        params = selected_courses * 2  # Reuse the list for both parts of WHERE clause
+        print(f"Executing query: {query} with params: {params}")
+        cursor.execute(query, params)
+
+        rows = cursor.fetchall()
+        print(f"Fetched {len(rows)} filtered prerequisite relationships.")
+
+        prereq_map = defaultdict(list)
+        for row in rows:
+            course_code = row[0].strip() if row[0] else ""
+            prereq_code = row[1].strip() if row[1] else ""
+            if course_code and prereq_code:
+                prereq_map[course_code].append(prereq_code)
+
+        cursor.close()
+        connection.close()
+
+        return prereq_map
+
+    except Exception as e:
+        print(f"Error fetching filtered prerequisites: {e}")
+        return defaultdict(list)
+
+def generate_relaxed_schedule():
+    try:
+        # Log received form data for debugging
+        print("Received Form Data:", dict(request.form))
+        # Initialize variables
+        course_sections = {}
+        instructor_assignments = {}
+        course_years = {}
+        fixed_times = {}
+
+        # Retrieve school_code and campus_code from hidden fields
+        school_code = request.form.get("school_code")
+        campus_code = request.form.get("campus_code")
+        # Validate school_code and campus_code
+        if not school_code or not campus_code:
+            return jsonify({"error": "School code and campus code are required."}), 400
+        # Fetch instructors for the selected school
+        instructors = get_instructors_by_school(school_code)
+        if not instructors:
+            return jsonify({"error": "No instructors available for the selected school."}), 400
+        # Process instructor availability from session
+        instructor_availability = session.get("instructor_availability", {})
+        print(f"[DEBUG] Session instructor_availability retrieved: {instructor_availability}")
+        if not instructor_availability:
+            return jsonify({"error": "Instructor availability data is missing."}), 400
+        # Debugging: Log the instructor availability data
+        print(f"Instructor Availability Data: {instructor_availability}")
+        # Process selected courses
+        all_sections = []
+        selected_courses = request.form.getlist("courses")
+        selected_base_courses = [course.rsplit("_", 1)[0] for course in selected_courses]
+
+        # Fetch only relevant prerequisites
+        prereq_map = get_prerequisites(selected_base_courses)
+        if not prereq_map:
+            print("No prerequisites found for the selected courses.")
+        for course_with_section in selected_courses:
+            base_course, section_letter = course_with_section.rsplit("_", 1)
+            num_students = int(request.form[f"students_{course_with_section}"])
+            instructor = request.form[f"instructor_{course_with_section}"]
+            year = int(request.form[f"year_{course_with_section}"])
+            # Process user-specified time (optional field)
+            time_str = request.form.get(f"time_{course_with_section}", "").strip()
+            if time_str:
+                # Validate time slot exists in the global time_slots array
+                if time_str not in time_slots:
+                    raise ValueError(f"Invalid time slot: {time_str}")
+                # Validate instructor availability for the specified time
+                if time_str not in instructor_availability.get(instructor, []):
+                    instr_name = next((i["facuser"] for i in instructors if i["identifier"] == instructor), "Unknown")
+                    print(f"Instructor {instr_name} availability: {instructor_availability.get(instructor, [])}")
+                    raise ValueError(f"Instructor {instr_name} unavailable at {time_str} for {course_with_section}")
+                fixed_times[course_with_section] = time_slots.index(time_str)  # Store index for CP model
+            # Assign instructor and year to the course section
+            instructor_assignments[course_with_section] = instructor
+            course_years[course_with_section] = year
+            # Group sections by base course
+            if base_course not in course_sections:
+                course_sections[base_course] = []
+            course_sections[base_course].append(course_with_section)
+            all_sections.append(course_with_section)
+        # Create CP model
+        model = cp_model.CpModel()
+        slot_vars = {s: model.NewIntVar(0, len(time_slots) - 1, f"slot_{s}") for s in all_sections}
+        # Add fixed time constraints (if user specified a time)
+        for section, time_idx in fixed_times.items():
+            model.Add(slot_vars[section] == time_idx)
+        # Handle lab constraints
+        lab_sections = []
+        for s in all_sections:
+            base_course = s.rsplit('_', 1)[0]
+            if base_course.endswith('L'):
+                lab_sections.append(s)
+        same_course_groups = defaultdict(list)
+        # Add an objective to minimize the number of distinct time slots for same-course labs
+        objective = model.NewIntVar(0, len(all_sections), "objective")
+        for base in same_course_groups:
+            group = same_course_groups[base]
+            if len(group) < 2:
+                continue
+            # Create a variable for each pair of sections in the group
+            for i in range(len(group)):
+                for j in range(i + 1, len(group)):
+                    s1 = group[i]
+                    s2 = group[j]
+                    # If s1 and s2 are in different slots, add 1 to the objective
+                    diff = model.NewBoolVar(f"{s1}_{s2}_diff")
+                    model.Add(slot_vars[s1] != slot_vars[s2]).OnlyEnforceIf(diff)
+                    model.Add(slot_vars[s1] == slot_vars[s2]).OnlyEnforceIf(diff.Not())
+                    model.Add(objective + diff <= objective + 1)
+        # Minimize the objective (prioritize same slots)
+        model.Minimize(objective)
+        # --- NEW CONSTRAINT: MAX 2 LABS PER TIME SLOT ---
+        # Collect all lab sections
+        lab_sections = []
+        for s in all_sections:
+            base_course = s.rsplit('_', 1)[0]
+            if base_course.endswith('L'):
+                lab_sections.append(s)
+        # Ensure no time slot has more than 2 lab courses
+        for i in range(len(lab_sections)):
+            for j in range(i + 1, len(lab_sections)):
+                for k in range(j + 1, len(lab_sections)):
+                    s1 = lab_sections[i]
+                    s2 = lab_sections[j]
+                    s3 = lab_sections[k]
+                    # Create boolean variables to track differences
+                    diff1 = model.NewBoolVar(f"{s1}_{s2}_diff")
+                    model.Add(slot_vars[s1] != slot_vars[s2]).OnlyEnforceIf(diff1)
+                    model.Add(slot_vars[s1] == slot_vars[s2]).OnlyEnforceIf(diff1.Not())
+                    diff2 = model.NewBoolVar(f"{s1}_{s3}_diff")
+                    model.Add(slot_vars[s1] != slot_vars[s3]).OnlyEnforceIf(diff2)
+                    model.Add(slot_vars[s1] == slot_vars[s3]).OnlyEnforceIf(diff2.Not())
+                    diff3 = model.NewBoolVar(f"{s2}_{s3}_diff")
+                    model.Add(slot_vars[s2] != slot_vars[s3]).OnlyEnforceIf(diff3)
+                    model.Add(slot_vars[s2] == slot_vars[s3]).OnlyEnforceIf(diff3.Not())
+                    # At least one difference must be true
+                    model.AddBoolOr([diff1, diff2, diff3])
+        # --- RELAXED CONSTRAINT: SAME YEAR COURSES CAN OVERLAP BASED ON SEMESTER ---
+        # Group courses by year and base course
+        courses_by_year = defaultdict(dict)
+        for section in all_sections:
+            base_course = section.rsplit('_', 1)[0]
+            year = course_years[section]
+            if year not in courses_by_year:
+                courses_by_year[year] = defaultdict(list)
+            courses_by_year[year][base_course].append(section)
+
+        # Allow overlapping for courses from the same year if they are prerequisites or different semesters
+        for year, base_courses in courses_by_year.items():
+            base_list = list(base_courses.keys())
+            for i in range(len(base_list)):
+                for j in range(i + 1, len(base_list)):
+                    bc1 = base_list[i]
+                    bc1_sections = base_courses[bc1]
+                    bc2 = base_list[j]
+                    bc2_sections = base_courses[bc2]
+
+                    # Extract semester information
+                    semester_bc1 = get_semester(bc1)
+                    semester_bc2 = get_semester(bc2)
+
+                    # Allow overlap for different semesters
+                    if semester_bc1 != semester_bc2:
+                        print(f"Allowing overlap between {bc1} and {bc2} due to different semesters.")
+                        continue
+
+                    # Check for prerequisite relationship
+                    is_prereq = False
+                    if bc2 in prereq_map.get(bc1, []) or bc1 in prereq_map.get(bc2, []):
+                        is_prereq = True
+
+                    if is_prereq:
+                        print(f"Allowing overlap between {bc1} and {bc2} due to prerequisite relationship.")
+                    else:
+                        print(f"Preventing overlap between {bc1} and {bc2}.")
+                        # Prevent overlap for same semester and non-prerequisite courses
+                        for s1 in bc1_sections:
+                            for s2 in bc2_sections:
+                                model.Add(slot_vars[s1] != slot_vars[s2])
+        # Ensure no instructor is assigned to more than one course at the same time
+        instructor_sections = defaultdict(list)
+        for section in all_sections:
+            instr_id = instructor_assignments[section]
+            instructor_sections[instr_id].append(section)
+
+        for instr_id, sections in instructor_sections.items():
+            # Separate lab sections and non-lab sections
+            lab_sections = []
+            non_lab_sections = []
+            for s in sections:
+                base_course = s.rsplit('_', 1)[0]
+                if base_course.endswith('L'):
+                    lab_sections.append(s)
+                else:
+                    non_lab_sections.append(s)
+
+            # Enforce no overlap for non-lab sections
+            n = len(non_lab_sections)
+            if n > 1:
+                for i in range(n):
+                    for j in range(i + 1, n):
+                        s1 = non_lab_sections[i]
+                        s2 = non_lab_sections[j]
+                        model.Add(slot_vars[s1] != slot_vars[s2])
+
+            # Prevent lab sections from overlapping with non-lab courses
+            for lab_section in lab_sections:
+                for other_section in sections:
+                    if lab_section == other_section:
+                        continue
+                    # Check if the other section is a lab
+                    other_base = other_section.rsplit('_', 1)[0]
+                    is_other_lab = other_base.endswith('L')
+                    if not is_other_lab:
+                        model.Add(slot_vars[lab_section] != slot_vars[other_section])
+        # --- NEW CONSTRAINT: PREVENT LECTURE AND LAB OVERLAP ---
+        # Identify lecture-lab pairs
+        # Prevent lecture and lab overlaps (similar to regular scheduler):
+        lecture_lab_pairs = defaultdict(list)
+        for section in all_sections:
+            base_course = section.rsplit('_', 1)[0]
+            if 'lab' in base_course.lower():  # Assuming lab courses have "lab" in their name
+                lecture_base = base_course.replace('Lab', '')  # Adjust based on naming
+                lecture_lab_pairs[lecture_base].append(section)
+            else:
+                lecture_lab_pairs[base_course].append(section)
+
+        for base, sections in lecture_lab_pairs.items():
+            lectures = [s for s in sections if 'lab' not in s.lower()]
+            labs = [s for s in sections if 'lab' in s.lower()]
+            for lecture in lectures:
+                for lab in labs:
+                    model.Add(slot_vars[lecture] != slot_vars[lab])
+
+        # Add availability constraints for each course section
+        for course_with_section in all_sections:
+            instr_id = instructor_assignments[course_with_section]
+            allowed = instructor_availability.get(instr_id, [])
+            # If time is fixed, only allow that slot
+            if course_with_section in fixed_times:
+                allowed = [fixed_times[course_with_section]]
+            else:
+                # Convert time slots to indexes
+                allowed = [time_slots.index(ts) for ts in allowed if ts in time_slots]
+            if allowed:
+                model.AddAllowedAssignments([slot_vars[course_with_section]], [[slot] for slot in allowed])
+            else:
+                print(f"No valid time slots available for instructor {instr_id}. Skipping constraint.")
+        # Solve the model without an objective function
+        solver = cp_model.CpSolver()
+        status = solver.Solve(model)
+        # Log solver status and statistics
+        print(f"Status: {solver.StatusName(status)}")
+        print(f"Number of variables: {len(slot_vars)}")
+        print(f"Number of constraints: {model.Proto().constraints.__len__()}")
+        # Check if a feasible solution was found
+        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            schedule = {}
+            for section in all_sections:
+                slot_index = solver.Value(slot_vars[section])
+                schedule[section] = {
+                    "time": time_slots[slot_index],
+                    "instructor": instructor_assignments[section],
+                }
+            max_slot = solver.Value(slot_vars[max(slot_vars, key=lambda s: solver.Value(slot_vars[s]))])
+            schedule["completion_time"] = time_slots[max_slot]
+            # Sort the schedule strictly by the order of time_slots
+            sorted_sections = sorted(
+                ((section, details) for section, details in schedule.items() if section != "completion_time"),
+                key=lambda item: time_slots.index(item[1]["time"])
+            )
+            sorted_schedule = {section: details for section, details in sorted_sections}
+            sorted_schedule["completion_time"] = schedule["completion_time"]
+            # Debugging: Log the generated schedule
+            print(f"Generated Relaxed Schedule: {sorted_schedule}")
+            # Return the sorted schedule as JSON
+            return jsonify(sorted_schedule)
+        else:
+            raise Exception("No feasible schedule found. Please adjust constraints.")
+    except Exception as e:
+        # Log and return any errors
+        print(f"Error: {e}")
         return jsonify({"error": str(e)}), 500
 
 
+def get_semester(course_code):
+    """
+    Extracts the semester information from a course code.
+    Assumes the second numeric digit determines the semester:
+        - < 5: First semester
+        - >= 5: Second semester
+    Ignores any trailing 'L' for lab courses.
+    """
+    # Remove trailing 'L' if present
+    if course_code.endswith('L'):
+        course_code = course_code[:-1]
+
+    # Extract all numeric digits from the course code
+    numeric_digits = [char for char in course_code if char.isdigit()]
+
+    # Ensure there are at least two numeric digits
+    if len(numeric_digits) < 2:
+        raise ValueError(f"Invalid course code format: {course_code}")
+
+    # The second numeric digit determines the semester
+    second_digit = int(numeric_digits[1])  # Second numeric digit
+
+    # Determine semester
+    semester = "first" if second_digit < 5 else "second"
+
+    # Debugging: Print the course code and its semester
+    print(f"Course Code: {course_code}, Semester: {semester}")
+
+    return semester
 
 @app.route("/instructor-availability")
 def instructor_availability():
@@ -1004,7 +1380,7 @@ def fetch_all_instructors():
 
 @app.route("/fetch_unavailable_instructors")
 def fetch_unavailable_instructors():
-    """Fetch instructors not associated with the current campus."""
+    """Fetch instructors not associated with the current campus based on the updated Instructor table."""
     try:
         school_code = request.args.get("school_code")
         campus_code = request.args.get("campus_code")
@@ -1020,15 +1396,12 @@ def fetch_unavailable_instructors():
         connection = pyodbc.connect(conn_string)
         cursor = connection.cursor()
 
+        # Updated query to use campusID from Instructor table
         query = """
             SELECT facuser, title, fname, mname, lname
             FROM Instructor
-            WHERE fac_code = ?
-              AND facuser NOT IN (
-                  SELECT facuser
-                  FROM Campus_Instructors
-                  WHERE campusID = ?
-              )
+            WHERE fac_code = ? AND Active = 1
+              AND (campusID IS NULL OR campusID != ?)
         """
         cursor.execute(query, school_code, campus_code)
         rows = cursor.fetchall()
@@ -1251,6 +1624,289 @@ def save_instructor_availability():
         print(f"Error saving availability: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/save_instructor', methods=['POST'])
+def save_instructor():
+    facuser = request.form.get('facuser')
+    title = request.form.get('title')
+    fname = request.form.get('fname')
+    mname = request.form.get('mname')
+    lname = request.form.get('lname')
+    accountEmail = request.form.get('accountEmail') or None
+    division = request.form.get('division')
+    fac_code = request.form.get('fac_code')
+    campusID = request.form.get('campusID')
+    active = request.form.get('active')  # 'Yes' or 'No'
+    active_bit = 1 if active == "Yes" else 0
+    try:
+        conn_str = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={DB_CONFIG['server']};"
+            f"DATABASE={DB_CONFIG['database']};"
+            f"UID={DB_CONFIG['username']};"
+            f"PWD={DB_CONFIG['password']};"
+        )
+        connection = pyodbc.connect(conn_str)
+        cursor = connection.cursor()
+        query = """
+        INSERT INTO instructor (facuser, title, fname, mname, lname, accountEmail, Division, fac_code, campusID, Active)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        cursor.execute(query, (facuser, title, fname, mname, lname, accountEmail, division, fac_code, campusID, active_bit))
+        connection.commit()
+        return jsonify({}), 200
+    except Exception as e:
+        print("Error saving instructor:", e)
+        return jsonify({"error": "Failed to save instructor"}), 500
+    finally:
+        connection.close()
+
+
+@app.route("/save_course", methods=["POST"])
+def save_course():
+    """
+    Save a new course to the database.
+    Automatically determines course_year based on course code suffix.
+    """
+    try:
+        # Get form data
+        course_code = request.form.get("course_code")
+        course_title = request.form.get("course_title")
+        credits = request.form.get("credits")
+        capcity = request.form.get("capcity")
+        level = request.form.get("level")
+        faculty_code = request.form.get("faculty_code")
+
+        # Validate course code format
+        if not course_code or len(course_code) < 3:
+            return jsonify({"error": "Course code must be at least 3 characters long"}), 400
+
+        # Handle lab courses (ends with 'L')
+        is_lab = course_code.endswith('L')
+
+        if is_lab:
+            # Remove 'L' and take the previous 3 digits
+            suffix = course_code[-4:-1]
+        else:
+            # Take last 3 characters as usual
+            suffix = course_code[-3:]
+
+        # Validate numeric suffix
+        if not suffix.isdigit():
+            return jsonify({"error": "Course code must have 3 digits before the 'L', e.g., CSCI300L"}), 400
+
+        course_number = int(suffix)
+
+        # Map course number to course_year
+        if 100 <= course_number < 200:
+            course_year = "Freshman Course"
+        elif 200 <= course_number < 300:
+            course_year = "First-year course"
+        elif 300 <= course_number < 400:
+            course_year = "Second-year course"
+        elif 400 <= course_number < 500:
+            course_year = "Third-year course"
+        elif 500 <= course_number < 600:
+            course_year = "Fourth-year course"
+        elif 600 <= course_number < 700:
+            course_year = "Fifth-year course"
+        else:
+            course_year = "Advanced or Special Course"
+
+        # If it's a lab course, append " (Lab)"
+        if is_lab:
+            course_year += " (Lab)"
+
+        # Database connection
+        conn_string = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={DB_CONFIG['server']};"
+            f"DATABASE={DB_CONFIG['database']};"
+            f"UID={DB_CONFIG['username']};"
+            f"PWD={DB_CONFIG['password']};"
+        )
+        connection = pyodbc.connect(conn_string)
+        cursor = connection.cursor()
+
+        # Check if course code already exists
+        check_query = "SELECT COUNT(*) FROM Course WHERE Code = ?"
+        cursor.execute(check_query, (course_code,))
+        count = cursor.fetchone()[0]
+
+        if count > 0:
+            cursor.close()
+            connection.close()
+            return jsonify({"error": "Course code already exists. Please choose another code."}), 400
+
+        # Insert the course
+        insert_query = """
+            INSERT INTO Course (Code, Title, Credits, Capcity, Level, fac_code, course_year)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """
+        cursor.execute(insert_query, (
+            course_code,
+            course_title,
+            credits,
+            capcity,
+            level,
+            faculty_code,
+            course_year
+        ))
+        connection.commit()
+
+        cursor.close()
+        connection.close()
+
+        return redirect(url_for("insert_course"))
+
+    except Exception as e:
+        print(f"Error saving course: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/index")
+def index():
+        """
+        Render the index page.
+        """
+        return render_template("index.html")
+
+@app.route("/insert_course")
+def insert_course():
+        """
+        Render the index page.
+        """
+        return render_template("insert_course.html")
+
+
+@app.route('/get_faculties_by_school')
+def get_faculties_by_school():
+    schl_code = request.args.get('schlCode')
+
+    if not schl_code:
+        return jsonify([])
+
+    try:
+        conn_str = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={DB_CONFIG['server']};"
+            f"DATABASE={DB_CONFIG['database']};"
+            f"UID={DB_CONFIG['username']};"
+            f"PWD={DB_CONFIG['password']};"
+        )
+        connection = pyodbc.connect(conn_str)
+        cursor = connection.cursor()
+        query = "SELECT faccode FROM Faculty WHERE schlCode = ? ORDER BY faccode ASC"
+        cursor.execute(query, schl_code)
+        rows = cursor.fetchall()
+        faculties = [row[0] for row in rows]
+        return jsonify(faculties)
+    except Exception as e:
+        print(f"Error fetching faculty codes: {e}")
+        return jsonify([])
+    finally:
+        connection.close()
+
+def get_schools_from_db1():
+    try:
+        conn_str = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={DB_CONFIG['server']};"
+            f"DATABASE={DB_CONFIG['database']};"
+            f"UID={DB_CONFIG['username']};"
+            f"PWD={DB_CONFIG['password']};"
+        )
+        connection = pyodbc.connect(conn_str)
+        cursor = connection.cursor()
+        query = "SELECT DISTINCT schlCode FROM Faculty ORDER BY schlCode ASC"
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        schools = [{"school_code": row[0]} for row in rows]
+        return schools
+    except Exception as e:
+        print(f"Error fetching schools: {e}")
+        return []
+    finally:
+        connection.close()
+
+@app.route('/insert_instructor')
+def insert_instructor():
+    schools = get_schools_from_db1()
+    campuses = get_campuses_from_db()  # assuming you already have this
+    return render_template('insert_instructor.html', schools=schools, campuses=campuses)
+
+@app.route('/check_facuser', methods=['GET'])
+def check_facuser():
+    facuser = request.args.get('facuser')
+    if not facuser:
+        return jsonify({"exists": False})
+
+    try:
+        conn_str = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={DB_CONFIG['server']};"
+            f"DATABASE={DB_CONFIG['database']};"
+            f"UID={DB_CONFIG['username']};"
+            f"PWD={DB_CONFIG['password']};"
+        )
+        connection = pyodbc.connect(conn_str)
+        cursor = connection.cursor()
+        query = "SELECT COUNT(*) FROM instructor WHERE facuser = ?"
+        cursor.execute(query, facuser)
+        count = cursor.fetchone()[0]
+        return jsonify({"exists": count > 0})
+    except Exception as e:
+        print("Error checking facuser:", e)
+        return jsonify({"exists": False})
+    finally:
+        connection.close()
+
+@app.route('/get_faculties')
+def get_faculties():
+    try:
+        conn_str = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={DB_CONFIG['server']};"
+            f"DATABASE={DB_CONFIG['database']};"
+            f"UID={DB_CONFIG['username']};"
+            f"PWD={DB_CONFIG['password']};"
+        )
+        connection = pyodbc.connect(conn_str)
+        cursor = connection.cursor()
+        query = "SELECT DISTINCT faccode FROM Faculty ORDER BY faccode ASC"
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        faculties = [row[0] for row in rows]
+        return jsonify(faculties)
+    except Exception as e:
+        print("Error fetching faculty codes:", e)
+        return jsonify([])
+    finally:
+        connection.close()
+
+@app.route('/check_course_code', methods=['GET'])
+def check_course_code():
+    course_code = request.args.get('course_code')
+    if not course_code:
+        return jsonify({"exists": False})
+
+    try:
+        conn_str = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={DB_CONFIG['server']};"
+            f"DATABASE={DB_CONFIG['database']};"
+            f"UID={DB_CONFIG['username']};"
+            f"PWD={DB_CONFIG['password']};"
+        )
+        connection = pyodbc.connect(conn_str)
+        cursor = connection.cursor()
+        query = "SELECT COUNT(*) FROM Course WHERE Code = ?"
+        cursor.execute(query, course_code)
+        count = cursor.fetchone()[0]
+        return jsonify({"exists": count > 0})
+    except Exception as e:
+        print("Error checking course code:", e)
+        return jsonify({"exists": False})
+    finally:
+        connection.close()
 
 
 if __name__ == "__main__":
