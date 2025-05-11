@@ -1,0 +1,50 @@
+/* Navbar Styling */
+.navbar {
+    background-color: #2c3e50;
+    color: white;
+    padding: 10px 0;
+    text-align: center;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    width: 100%;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1000;
+}
+
+.navbar button {
+    background-color: transparent;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.navbar button:hover {
+    background-color: #34495e;
+    transform: translateY(-2px);
+}
+
+.navbar button::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 0;
+    height: 2px;
+    background-color: white;
+    transition: width 0.3s ease;
+}
+
+.navbar button:hover::after {
+    width: 100%;
+}
+
+/* Add padding to body to prevent content from being hidden behind the fixed navbar */
+body {
+    padding-top: 60px;
+}

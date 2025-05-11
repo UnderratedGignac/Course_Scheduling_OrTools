@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Insert an Instructor</title>
+    <title>Edit an Instructor</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
     <style>
         body {
@@ -216,7 +216,7 @@
         <button onclick="window.location.href='/edit_instructor'">Edit Instructor</button>
     </div>
 
-    <h1>Insert an Instructor</h1>
+    <h1>Edit an Instructor</h1>
 
     <div class="form-container">
         <div id="error-message" class="message error-message">
@@ -224,14 +224,23 @@
             <button id="close-error" style="position: absolute; right: 12px; top: 12px; background: none; border: none; color: #721c24; cursor: pointer; font-size: 18px;">×</button>
         </div>
         <div id="success-message" class="message success-message">
-            <span id="success-text">Instructor added successfully!</span>
+            <span id="success-text">Instructor updated successfully!</span>
             <button id="close-success" style="position: absolute; right: 12px; top: 12px; background: none; border: none; color: #155724; cursor: pointer; font-size: 18px;">×</button>
         </div>
 
-        <form id="instructor-form" action="/save_instructor" method="POST">
+        <!-- Instructor Selection Section -->
+        <div class="form-group">
+            <label for="instructor-search">Search Instructor</label>
+            <input type="text" id="instructor-search" placeholder="Type to search instructors...">
+            <div id="instructor-dropdown" style="display: none; max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px; margin-top: 5px;">
+                <!-- Instructors will be populated here -->
+            </div>
+        </div>
+
+        <form id="instructor-form" action="/update_instructor" method="POST">
             <div class="form-group">
                 <label for="facuser">Faculty User</label>
-                <input type="text" id="facuser" name="facuser" required placeholder="Enter Faculty User">
+                <input type="text" id="facuser" name="facuser" required placeholder="Enter Faculty User" readonly>
             </div>
             <div class="form-group">
                 <label for="fname">First Name</label>
@@ -261,15 +270,6 @@
                 </select>
             </div>
             <div class="form-group">
-                <label for="schlCode">School Code</label>
-                <select id="schlCode" name="schlCode" required>
-                    <option value="">Select School Code</option>
-                    {% for school in schools %}
-                    <option value="{{ school.school_code }}">{{ school.school_code }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="form-group">
                 <label for="fac_code">Faculty Code</label>
                 <select id="fac_code" name="fac_code" required>
                     <option value="">Select Faculty Code</option>
@@ -292,7 +292,7 @@
                     <option value="No">No</option>
                 </select>
             </div>
-            <button type="submit" class="submit-btn">Submit</button>
+            <button type="submit" class="submit-btn">Update Instructor</button>
         </form>
     </div>
 
@@ -306,6 +306,13 @@
             const successText = document.getElementById('success-text');
             const closeSuccess = document.getElementById('close-success');
             const facuserInput = document.getElementById('facuser');
+            const instructorSearch = document.getElementById('instructor-search');
+            const instructorDropdown = document.getElementById('instructor-dropdown');
+
+            let allInstructors = [];
+
+            // Fetch all instructors when the page loads
+            fetchAllInstructors();
 
             // Add event listener to close buttons
             closeError.addEventListener('click', function() {
@@ -316,45 +323,164 @@
                 successMessage.style.display = 'none';
             });
 
+            // Add event listener to instructor search input
+            instructorSearch.addEventListener('input', function() {
+                const searchTerm = this.value.trim().toLowerCase();
+
+                if (searchTerm.length === 0) {
+                    instructorDropdown.style.display = 'none';
+                    return;
+                }
+
+                // Filter instructors based on search term
+                const filteredInstructors = allInstructors.filter(instructor => {
+                    const fullName = `${instructor.fname} ${instructor.lname}`.toLowerCase();
+                    return instructor.facuser.toLowerCase().includes(searchTerm) || 
+                           fullName.includes(searchTerm);
+                });
+
+                // Display filtered instructors in dropdown
+                displayInstructorsInDropdown(filteredInstructors);
+            });
+
+            // Add event listener to document to close dropdown when clicking outside
+            document.addEventListener('click', function(e) {
+                if (e.target !== instructorSearch && e.target !== instructorDropdown) {
+                    instructorDropdown.style.display = 'none';
+                }
+            });
+
+            // Function to fetch all instructors
+            function fetchAllInstructors() {
+                fetch('/fetch_all_instructors')
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Failed to fetch instructors');
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        allInstructors = data;
+                    })
+                    .catch(error => {
+                        console.error('Error fetching instructors:', error);
+                        errorText.textContent = error.message;
+                        errorMessage.style.display = 'block';
+                    });
+            }
+
+            // Function to display instructors in dropdown
+            function displayInstructorsInDropdown(instructors) {
+                instructorDropdown.innerHTML = '';
+
+                if (instructors.length === 0) {
+                    const noResults = document.createElement('div');
+                    noResults.textContent = 'No instructors found';
+                    noResults.style.padding = '8px';
+                    instructorDropdown.appendChild(noResults);
+                } else {
+                    instructors.forEach(instructor => {
+                        const instructorItem = document.createElement('div');
+                        instructorItem.textContent = `${instructor.facuser} - ${instructor.title} ${instructor.fname} ${instructor.lname}`;
+                        instructorItem.style.padding = '8px';
+                        instructorItem.style.cursor = 'pointer';
+                        instructorItem.style.borderBottom = '1px solid #eee';
+
+                        instructorItem.addEventListener('mouseover', function() {
+                            this.style.backgroundColor = '#f0f0f0';
+                        });
+
+                        instructorItem.addEventListener('mouseout', function() {
+                            this.style.backgroundColor = 'transparent';
+                        });
+
+                        instructorItem.addEventListener('click', function() {
+                            selectInstructor(instructor.facuser);
+                            instructorDropdown.style.display = 'none';
+                            instructorSearch.value = `${instructor.facuser} - ${instructor.title} ${instructor.fname} ${instructor.lname}`;
+                        });
+
+                        instructorDropdown.appendChild(instructorItem);
+                    });
+                }
+
+                instructorDropdown.style.display = 'block';
+            }
+
+            // Function to select an instructor and populate form fields
+            function selectInstructor(facuser) {
+                fetch(`/get_instructor_details?facuser=${facuser}`)
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Failed to fetch instructor details');
+                        }
+                        return response.json();
+                    })
+                    .then(instructor => {
+                        // Populate form fields with instructor details
+                        document.getElementById('facuser').value = instructor.facuser;
+                        document.getElementById('fname').value = instructor.fname;
+                        document.getElementById('mname').value = instructor.mname || '';
+                        document.getElementById('lname').value = instructor.lname;
+                        document.getElementById('accountEmail').value = instructor.accountEmail || '';
+                        document.getElementById('title').value = instructor.title;
+
+                        // Set faculty code directly
+                        setTimeout(() => {
+                            const facCodeSelect = document.getElementById('fac_code');
+                            facCodeSelect.value = instructor.fac_code;
+                            console.log("Setting faculty code to:", instructor.fac_code);
+
+                            // If the faculty code isn't in the dropdown, add it
+                            if (facCodeSelect.value !== instructor.fac_code) {
+                                console.log("Faculty code not found in dropdown, adding it");
+                                const option = document.createElement('option');
+                                option.value = instructor.fac_code;
+                                option.textContent = instructor.fac_code;
+                                facCodeSelect.appendChild(option);
+                                facCodeSelect.value = instructor.fac_code;
+                            }
+
+                            console.log("Faculty code set to:", facCodeSelect.value);
+                        }, 100);
+
+                        document.getElementById('campusID').value = instructor.campusID;
+                        document.getElementById('active').value = instructor.active;
+                    })
+                    .catch(error => {
+                        console.error('Error fetching instructor details:', error);
+                        errorText.textContent = error.message;
+                        errorMessage.style.display = 'block';
+                    });
+            }
+
             form.addEventListener('submit', function(e) {
-    e.preventDefault();
+                e.preventDefault();
 
-    // Clear any previous messages and styling
-    errorMessage.style.display = 'none';
-    successMessage.style.display = 'none';
-    errorText.textContent = '';
-    facuserInput.style.border = '1px solid #ccc';
+                // Clear any previous messages and styling
+                errorMessage.style.display = 'none';
+                successMessage.style.display = 'none';
+                errorText.textContent = '';
+                facuserInput.style.border = '1px solid #ccc';
 
-    const facuser = facuserInput.value.trim();
+                const facuser = facuserInput.value.trim();
 
-    if (!facuser) {
-        errorText.textContent = "Faculty User is required.";
-        errorMessage.style.display = 'block';
-        facuserInput.focus();
-        return;
-    }
+                if (!facuser) {
+                    errorText.textContent = "Faculty User is required.";
+                    errorMessage.style.display = 'block';
+                    facuserInput.focus();
+                    return;
+                }
 
-    // Check if facuser already exists
-    fetch(`/check_facuser?facuser=${encodeURIComponent(facuser)}`)
-        .then(response => response.json())
-        .then(data => {
-            if (data.exists) {
-                errorText.textContent = "This Faculty User already exists. Please change the Faculty User .";
-                errorMessage.style.display = 'block';
-                facuserInput.style.border = '2px solid #dc3545';
-                facuserInput.focus();
-                return;
-            } else {
-                // No duplicate found — proceed with form submission
+                // Submit the form
                 const formData = new FormData(form);
-                fetch('/save_instructor', {
+                fetch('/update_instructor', {
                     method: 'POST',
                     body: formData
                 })
                 .then(response => {
                     if (response.ok) {
                         successMessage.style.display = 'block';
-                        form.reset();
                         window.scrollTo({
                             top: form.offsetTop - 20,
                             behavior: 'smooth'
@@ -374,55 +500,37 @@
                         behavior: 'smooth'
                     });
                 });
-            }
-        })
-        .catch(error => {
-            console.error("Error checking facuser:", error);
-            errorText.textContent = "Unable to validate Faculty User. Please try again later.";
-            errorMessage.style.display = 'block';
-            window.scrollTo({
-                top: form.offsetTop - 20,
-                behavior: 'smooth'
             });
         });
-});})
     </script>
-<script>
-    document.addEventListener('DOMContentLoaded', function () {
-    const schlCodeSelect = document.getElementById('schlCode');
-    const facCodeSelect = document.getElementById('fac_code');
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const facCodeSelect = document.getElementById('fac_code');
 
-    function loadFacultiesBySchool(schlCode) {
-        if (!schlCode) {
-            facCodeSelect.innerHTML = '<option value="">Select Faculty Code</option>';
-            return;
-        }
+            function loadAllFaculties() {
+                fetch('/get_faculties')
+                    .then(response => {
+                        if (!response.ok) throw new Error("Network response was not ok");
+                        return response.json();
+                    })
+                    .then(data => {
+                        facCodeSelect.innerHTML = '<option value="">Select Faculty Code</option>';
+                        data.forEach(facCode => {
+                            const option = document.createElement('option');
+                            option.value = facCode;
+                            option.textContent = facCode;
+                            facCodeSelect.appendChild(option);
+                        });
+                    })
+                    .catch(error => {
+                        console.error("Error fetching faculty codes:", error);
+                        facCodeSelect.innerHTML = '<option value="">Error loading</option>';
+                    });
+            }
 
-        fetch(`/get_faculties_by_school?schlCode=${schlCode}`)
-            .then(response => {
-                if (!response.ok) throw new Error("Network response was not ok");
-                return response.json();
-            })
-            .then(data => {
-                facCodeSelect.innerHTML = '<option value="">Select Faculty Code</option>';
-                data.forEach(facCode => {
-                    const option = document.createElement('option');
-                    option.value = facCode;
-                    option.textContent = facCode;
-                    facCodeSelect.appendChild(option);
-                });
-            })
-            .catch(error => {
-                console.error("Error fetching faculty codes:", error);
-                facCodeSelect.innerHTML = '<option value="">Error loading</option>';
-            });
-    }
-
-    schlCodeSelect.addEventListener('change', function () {
-        const selectedSchlCode = this.value;
-        loadFacultiesBySchool(selectedSchlCode);
-    });
-});
-</script>
+            // Load all faculties when the page loads
+            loadAllFaculties();
+        });
+    </script>
 </body>
 </html>

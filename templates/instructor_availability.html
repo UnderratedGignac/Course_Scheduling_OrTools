@@ -15,7 +15,7 @@
             <span class="close">&times;</span>
             <h3>Select Instructors to Add</h3>
             <!-- Search Bar -->
-            <input type="text" id="searchInstructorInput" placeholder="Search by username..." style="width: 100%; padding: 8px; margin-bottom: 10px;">
+            <input type="text" id="searchInstructorInput" placeholder="Search by name..." style="width: 100%; padding: 8px; margin-bottom: 10px;">
             <form id="addInstructorsForm">
                 <input type="hidden" name="school_code" value="{{ school_code }}">
                 <input type="hidden" name="campus_code" value="{{ campus_code }}">
@@ -29,43 +29,25 @@
     </div>
     <div class="card">
         <form id="availability-form" method="POST" action="/save_availability">
-            <!-- Move search bar here -->
-    <input type="text" id="instructorSearch" placeholder="Search instructors..." style="width: 100%; padding: 8px; margin: 10px 0; box-sizing: border-box;">
-    <script>
-        // Improved search functionality to preserve layout
-document.getElementById('instructorSearch').addEventListener('input', function () {
-    const searchTerm = this.value.trim().toLowerCase();
-    const instructorGrids = document.querySelectorAll('.availability-grid');
-
-    instructorGrids.forEach(grid => {
-        const name = grid.querySelector('h4').textContent.trim().toLowerCase();
-        if (name.includes(searchTerm)) {
-            grid.style.visibility = 'visible';
-            grid.style.position = 'relative';
-        } else {
-            grid.style.visibility = 'hidden';
-            grid.style.position = 'absolute';
-        }
-    });
-});
-    </script>
+            <!-- Search bar -->
+            <input type="text" id="instructorSearch" placeholder="Search instructors..." style="width: 100%; padding: 8px; margin: 10px 0; box-sizing: border-box;">
             <!-- Hidden Fields -->
             <input type="hidden" name="school_code" value="{{ school_code }}">
             <input type="hidden" name="campus_code" value="{{ campus_code }}">
-            <input type="hidden" name="academic_year" value="{{ academic_year }}"> <!-- Added -->
-            <input type="hidden" name="semester" value="{{ semester }}"> <!-- Added -->
+            <input type="hidden" name="academic_year" value="{{ academic_year }}">
+            <input type="hidden" name="semester" value="{{ semester }}">
             <div class="availability-grid-container" id="availability-grid-container">
                 {% for instructor in instructors %}
                 <div class="availability-grid" id="instructor-{{ instructor.facuser }}">
                     <h4>{{ instructor.facuser }}</h4>
                     {% if semester == "Summer" %}
-                        {% for slot in ['8:00-9:50', '10:00-11:50', '12:00-1:50'] %}
+                        {% for slot in ['MWTTH 8:00-9:50', 'MWTTH 10:00-11:50', 'MWTTH 12:00-1:50'] %}
                         <div class="time-slot">
                             <label>{{ slot }}</label>
                             <button
                                 type="button"
                                 class="availability-btn"
-                                data-instr="{{ instructor.identifier }}"
+                                data-instr="{{ instructor.facuser }}"
                                 data-day="0"
                                 data-slot="{{ loop.index0 }}"
                             >{{ slot }}</button>
@@ -74,21 +56,22 @@ document.getElementById('instructorSearch').addEventListener('input', function (
                     {% else %}
                         {% for slot in [
                             "8:00-9:15 AM", "9:30-10:45 AM", "11:00 AM-12:15 PM",
-                            "12:30-1:45 PM", "2:00-3:15 PM", "3:30-4:45 PM","5:00-6:15 PM", "6:30-8:45 PM"
+                            "12:30-1:45 PM", "2:00-3:15 PM", "3:30-4:45 PM",
+                            "5:00-6:15 PM", "6:30-8:45 PM"
                         ] %}
                         <div class="time-slot">
                             <label>{{ slot }}</label>
                             <button
                                 type="button"
                                 class="availability-btn"
-                                data-instr="{{ instructor.identifier }}"
+                                data-instr="{{ instructor.facuser }}"
                                 data-day="0"
                                 data-slot="{{ loop.index0 }}"
                             >MW {{ slot }}</button>
                             <button
                                 type="button"
                                 class="availability-btn"
-                                data-instr="{{ instructor.identifier }}"
+                                data-instr="{{ instructor.facuser }}"
                                 data-day="1"
                                 data-slot="{{ loop.index0 }}"
                             >TTh {{ slot }}</button>
@@ -109,12 +92,56 @@ document.getElementById('instructorSearch').addEventListener('input', function (
         const instructorCheckboxList = document.getElementById("instructor-checkbox-list");
         // Track currently displayed instructors
         let displayedInstructors = new Set();
-        // Function to fetch unavailable instructors (excluding displayed ones)
-        const fetchUnavailableInstructors = async () => {
+
+        // Function to fetch and display instructor availability
+        const fetchAndDisplayAvailability = async () => {
             const schoolCode = "{{ school_code }}";
             const campusCode = "{{ campus_code }}";
+            const academicYear = "{{ academic_year }}";
+            const semester = "{{ semester }}";
+
             try {
-                const response = await fetch(`/fetch_unavailable_instructors?school_code=${schoolCode}&campus_code=${campusCode}`);
+                const response = await fetch(`/fetch_instructor_availability?school_code=${schoolCode}&campus_code=${campusCode}&academic_year=${academicYear}&semester=${semester}`);
+                const data = await response.json();
+                
+                if (response.ok && data.instructor_availability) {
+                    // Process each instructor's availability
+                    Object.entries(data.instructor_availability).forEach(([facuser, instructorData]) => {
+                        instructorData.time_slots.forEach(timeSlot => {
+                            // Find the corresponding button and select it
+                            const buttons = document.querySelectorAll(`.availability-btn[data-instr="${facuser}"]`);
+                            buttons.forEach(button => {
+                                const buttonText = button.textContent.trim();
+                                if (buttonText === timeSlot) {
+                                    button.classList.add('selected');
+                                    // Add hidden input for form submission
+                                    const day = button.dataset.day;
+                                    const slot = button.dataset.slot;
+                                    const formDataKey = `availability_${facuser}`;
+                                    const formDataValue = `${day}_${slot}`;
+                                    const form = document.getElementById('availability-form');
+                                    const input = document.createElement('input');
+                                    input.type = 'hidden';
+                                    input.name = formDataKey;
+                                    input.value = formDataValue;
+                                    form.appendChild(input);
+                                }
+                            });
+                        });
+                    });
+                }
+            } catch (error) {
+                console.error('Error fetching instructor availability:', error);
+            }
+        };
+
+        // Call the function when the page loads
+        document.addEventListener('DOMContentLoaded', fetchAndDisplayAvailability);
+
+        // Function to fetch unavailable instructors (excluding displayed ones)
+        const fetchUnavailableInstructors = async (schoolCode, campusCode, academicYear, semester) => {
+            try {
+                const response = await fetch(`/fetch_unavailable_instructors?school_code=${schoolCode}&campus_code=${campusCode}&year=${academicYear}&semester=${semester}`);
                 const data = await response.json();
                 if (response.ok) {
                     // Filter out displayed instructors
@@ -124,6 +151,7 @@ document.getElementById('instructorSearch').addEventListener('input', function (
                     } else {
                         let html = "";
                         filteredInstructors.forEach(instructor => {
+                            const fullName = `${instructor.title} ${instructor.fname} ${instructor.mname || ''} ${instructor.lname}`.trim();
                             html += `
                                 <label style="display: block;">
                                     <input type="checkbox" name="selected_instructors" value="${instructor.facuser}">
@@ -138,8 +166,8 @@ document.getElementById('instructorSearch').addEventListener('input', function (
                             const searchTerm = searchInput.value.toLowerCase();
                             const labels = instructorCheckboxList.querySelectorAll("label");
                             labels.forEach(label => {
-                                const username = label.textContent.toLowerCase();
-                                if (username.includes(searchTerm)) {
+                                const text = label.textContent.toLowerCase();
+                                if (text.includes(searchTerm)) {
                                     label.style.display = "block";
                                 } else {
                                     label.style.display = "none";
@@ -154,108 +182,81 @@ document.getElementById('instructorSearch').addEventListener('input', function (
                 instructorCheckboxList.innerHTML = `<p>Error loading instructors: ${error.message}</p>`;
             }
         };
-        // Event listener for opening the modal
-        btn.onclick = async () => {
-            modal.style.display = "block";
-            // Fetch unavailable instructors when the modal opens
-            await fetchUnavailableInstructors();
-        };
-        span.onclick = () => modal.style.display = "none";
-        window.onclick = (event) => {
-            if (event.target == modal) modal.style.display = "none";
-        };
-        // Add selected instructors to the DOM dynamically
-        document.getElementById("addSelectedInstructorsBtn").addEventListener("click", () => {
-    const selectedCheckboxes = document.querySelectorAll("#instructor-checkbox-list input[type='checkbox']:checked");
-    const availabilityGridContainer = document.getElementById("availability-grid-container");
 
-    selectedCheckboxes.forEach(checkbox => {
-        const facuser = checkbox.value;
+        // Call fetchUnavailableInstructors when the modal is opened
+        btn.onclick = function() {
+    modal.style.display = "block";
+    const schoolCode = "{{ school_code }}";
+    const campusCode = "{{ campus_code }}";
+    const academicYear = "{{ academic_year }}";
+    const semester = "{{ semester }}";
 
-        // Check if the instructor is already displayed
-        if (!displayedInstructors.has(facuser)) {
-            const summerSlots = ['8:00-9:50', '10:00-11:50', '12:00-1:50'];
-            const regularSlots = [
-                "8:00-9:15 AM", "9:30-10:45 AM", "11:00 AM-12:15 PM",
-                "12:30-1:45 PM", "2:00-3:15 PM", "3:30-4:45 PM", "5:00-6:15 PM", "6:30-8:45 PM"
-            ];
-            const slots = "{{ semester }}" === "Summer" ? summerSlots : regularSlots;
+    fetchUnavailableInstructors(schoolCode, campusCode, academicYear, semester);
+}
 
-            // Generate HTML for the new instructor
-            const newInstructorHTML = `
-                <div class="availability-grid" id="instructor-${facuser}">
-                    <h4>${facuser}</h4>
-                    ${slots.map((slot, index) => `
-                        <div class="time-slot">
-                            <label>${slot}</label>
-                            ${"{{ semester }}" !== "Summer" ? `
-                                <button
-                                    type="button"
-                                    class="availability-btn"
-                                    data-instr="${facuser}"
-                                    data-day="0"
-                                    data-slot="${index}"
-                                >MW ${slot}</button>
-                                <button
-                                    type="button"
-                                    class="availability-btn"
-                                    data-instr="${facuser}"
-                                    data-day="1"
-                                    data-slot="${index}"
-                                >TTh ${slot}</button>
-                            ` : `
-                                <button
-                                    type="button"
-                                    class="availability-btn"
-                                    data-instr="${facuser}"
-                                    data-day="0"
-                                    data-slot="${index}"
-                                >${slot}</button>
-                            `}
-                        </div>
-                    `).join("")}
-                </div>
-            `;
-
-            // Append the new instructor to the grid
-            availabilityGridContainer.insertAdjacentHTML("beforeend", newInstructorHTML);
-
-            // Add the instructor to the displayedInstructors set
-            displayedInstructors.add(facuser);
+        span.onclick = function() {
+            modal.style.display = "none";
         }
-    });
 
-    // Close the modal after adding
-    modal.style.display = "none";
-});
-        // Event delegation for dynamically added buttons
-        const availabilityGridContainer = document.getElementById("availability-grid-container");
-        availabilityGridContainer.addEventListener("click", (event) => {
-            const target = event.target;
-            // Check if the clicked element is an availability button
-            if (target.classList.contains("availability-btn")) {
-                target.classList.toggle("selected");
-                const instrId = target.dataset.instr.trim();
-                const day = target.dataset.day;
-                const slot = target.dataset.slot;
-                const formDataKey = `availability_${instrId}`;
-                const formDataValue = `${day}_${slot}`;
-                const form = document.getElementById('availability-form');
-                const existingInput = form.querySelector(`[name="${formDataKey}"][value="${formDataValue}"]`);
-                if (existingInput) {
-                    existingInput.remove();
-                } else {
-                    const input = document.createElement('input');
-                    input.type = 'hidden';
-                    input.name = formDataKey;
-                    input.value = formDataValue;
-                    form.appendChild(input);
-                }
+        window.onclick = function(event) {
+            if (event.target == modal) {
+                modal.style.display = "none";
             }
+        }
+
+        // Handle instructor selection and button clicks
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add click handlers for availability buttons
+            document.querySelectorAll('.availability-btn').forEach(button => {
+                button.addEventListener('click', function() {
+                    this.classList.toggle('selected');
+                    const facuser = this.dataset.instr;
+                    const day = this.dataset.day;
+                    const slot = this.dataset.slot;
+                    const formDataKey = `availability_${facuser}`;
+                    const formDataValue = `${day}_${slot}`;
+
+                    // Remove existing hidden input if it exists
+                    const existingInput = document.querySelector(`input[name="${formDataKey}"][value="${formDataValue}"]`);
+                    if (existingInput) {
+                        existingInput.remove();
+                    } else {
+                        // Add new hidden input
+                        const input = document.createElement('input');
+                        input.type = 'hidden';
+                        input.name = formDataKey;
+                        input.value = formDataValue;
+                        document.getElementById('availability-form').appendChild(input);
+                    }
+                });
+            });
+
+            // Handle adding selected instructors
+            document.getElementById('addSelectedInstructorsBtn').addEventListener('click', function() {
+                const selectedInstructors = document.querySelectorAll('input[name="selected_instructors"]:checked');
+                selectedInstructors.forEach(checkbox => {
+                    const facuser = checkbox.value;
+                    displayedInstructors.add(facuser);
+                });
+                modal.style.display = "none";
+            });
         });
-        document.getElementById('availability-form').addEventListener('submit', (e) => {
-            const formData = new FormData(e.target);
-            console.log("Form Data Before Submission:", Object.fromEntries(formData.entries()));
+
+        // Improved search functionality to preserve layout
+        document.getElementById('instructorSearch').addEventListener('input', function() {
+            const searchTerm = this.value.trim().toLowerCase();
+            const instructorGrids = document.querySelectorAll('.availability-grid');
+
+            instructorGrids.forEach(grid => {
+                const name = grid.querySelector('h4').textContent.trim().toLowerCase();
+                if (name.includes(searchTerm)) {
+                    grid.style.visibility = 'visible';
+                    grid.style.position = 'relative';
+                } else {
+                    grid.style.visibility = 'hidden';
+                    grid.style.position = 'absolute';
+                }
+            });
         });
     </script>
 </body>

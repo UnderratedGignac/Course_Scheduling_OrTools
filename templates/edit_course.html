@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Insert a Course</title>
+    <title>Edit a Course</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
     <style>
         body {
@@ -209,7 +209,7 @@
         <button onclick="window.location.href='/edit_instructor'">Edit Instructor</button>
     </div>
 
-    <h1>Insert a Course</h1>
+    <h1>Edit a Course</h1>
 
     <div class="form-container">
         <div id="error-message" class="message error-message">
@@ -217,14 +217,23 @@
             <button id="close-error" style="position: absolute; right: 12px; top: 12px; background: none; border: none; color: #721c24; cursor: pointer; font-size: 18px;">×</button>
         </div>
         <div id="success-message" class="message success-message">
-            <span id="success-text">Course added successfully!</span>
+            <span id="success-text">Course updated successfully!</span>
             <button id="close-success" style="position: absolute; right: 12px; top: 12px; background: none; border: none; color: #155724; cursor: pointer; font-size: 18px;">×</button>
         </div>
 
-        <form id="course-form" action="/save_course" method="POST">
+        <!-- Course Selection Section -->
+        <div class="form-group">
+            <label for="course-search">Search Course by Code</label>
+            <input type="text" id="course-search" placeholder="Type to search courses...">
+            <div id="course-dropdown" style="display: none; max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px; margin-top: 5px;">
+                <!-- Courses will be populated here -->
+            </div>
+        </div>
+
+        <form id="course-form" action="/update_course" method="POST">
             <div class="form-group">
                 <label for="course_code">Course Code</label>
-                <input type="text" id="course_code" name="course_code" required placeholder="Enter Course Code">
+                <input type="text" id="course_code" name="course_code" required placeholder="Enter Course Code" readonly>
             </div>
             <div class="form-group">
                 <label for="course_title">Course Title</label>
@@ -252,43 +261,14 @@
                     <option value="">Select Faculty Code</option>
                 </select>
             </div>
-            <button type="submit" class="submit-btn">Submit</button>
+            <button type="submit" class="submit-btn">Update Course</button>
         </form>
     </div>
-<script>
-document.addEventListener('DOMContentLoaded', function () {
-    const facultySelect = document.getElementById('faculty_code');
-
-    // Fetch faculty codes from Flask backend
-    fetch('/get_faculties')
-        .then(response => response.json())
-        .then(faculties => {
-            if (faculties.length === 0) {
-                const option = document.createElement('option');
-                option.value = '';
-                option.textContent = 'No faculty codes found';
-                facultySelect.appendChild(option);
-                return;
-            }
-
-            faculties.forEach(facCode => {
-                const option = document.createElement('option');
-                option.value = facCode;
-                option.textContent = facCode;
-                facultySelect.appendChild(option);
-            });
-        })
-        .catch(error => {
-            console.error("Error fetching faculty codes:", error);
-            const option = document.createElement('option');
-            option.value = '';
-            option.textContent = 'Error loading faculty codes';
-            facultySelect.appendChild(option);
-        });
-});
-</script>
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
+        document.addEventListener('DOMContentLoaded', function () {
+            const facultySelect = document.getElementById('faculty_code');
+            const courseSearch = document.getElementById('course-search');
+            const courseDropdown = document.getElementById('course-dropdown');
             const form = document.getElementById('course-form');
             const errorMessage = document.getElementById('error-message');
             const errorText = document.getElementById('error-text');
@@ -297,6 +277,38 @@ document.addEventListener('DOMContentLoaded', function () {
             const successText = document.getElementById('success-text');
             const closeSuccess = document.getElementById('close-success');
             const courseCodeInput = document.getElementById('course_code');
+
+            let allCourses = [];
+
+            // Fetch all courses when the page loads
+            fetchAllCourses();
+
+            // Fetch faculty codes from Flask backend
+            fetch('/get_faculties')
+                .then(response => response.json())
+                .then(faculties => {
+                    if (faculties.length === 0) {
+                        const option = document.createElement('option');
+                        option.value = '';
+                        option.textContent = 'No faculty codes found';
+                        facultySelect.appendChild(option);
+                        return;
+                    }
+
+                    faculties.forEach(facCode => {
+                        const option = document.createElement('option');
+                        option.value = facCode;
+                        option.textContent = facCode;
+                        facultySelect.appendChild(option);
+                    });
+                })
+                .catch(error => {
+                    console.error("Error fetching faculty codes:", error);
+                    const option = document.createElement('option');
+                    option.value = '';
+                    option.textContent = 'Error loading faculty codes';
+                    facultySelect.appendChild(option);
+                });
 
             // Add event listener to close buttons
             closeError.addEventListener('click', function() {
@@ -307,45 +319,155 @@ document.addEventListener('DOMContentLoaded', function () {
                 successMessage.style.display = 'none';
             });
 
+            // Add event listener to course search input
+            courseSearch.addEventListener('input', function() {
+                const searchTerm = this.value.trim().toLowerCase();
+
+                if (searchTerm.length === 0) {
+                    courseDropdown.style.display = 'none';
+                    return;
+                }
+
+                // Filter courses based on search term
+                const filteredCourses = allCourses.filter(course => {
+                    return course.course_code.toLowerCase().includes(searchTerm) || 
+                           course.course_title.toLowerCase().includes(searchTerm);
+                });
+
+                // Display filtered courses in dropdown
+                displayCoursesInDropdown(filteredCourses);
+            });
+
+            // Add event listener to document to close dropdown when clicking outside
+            document.addEventListener('click', function(e) {
+                if (e.target !== courseSearch && e.target !== courseDropdown) {
+                    courseDropdown.style.display = 'none';
+                }
+            });
+
+            // Function to fetch all courses
+            function fetchAllCourses() {
+                fetch('/fetch_all_courses')
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Failed to fetch courses');
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        allCourses = data;
+                    })
+                    .catch(error => {
+                        console.error('Error fetching courses:', error);
+                        errorText.textContent = error.message;
+                        errorMessage.style.display = 'block';
+                    });
+            }
+
+            // Function to display courses in dropdown
+            function displayCoursesInDropdown(courses) {
+                courseDropdown.innerHTML = '';
+
+                if (courses.length === 0) {
+                    const noResults = document.createElement('div');
+                    noResults.textContent = 'No courses found';
+                    noResults.style.padding = '8px';
+                    courseDropdown.appendChild(noResults);
+                } else {
+                    courses.forEach(course => {
+                        const courseItem = document.createElement('div');
+                        courseItem.textContent = `${course.course_code} - ${course.course_title}`;
+                        courseItem.style.padding = '8px';
+                        courseItem.style.cursor = 'pointer';
+                        courseItem.style.borderBottom = '1px solid #eee';
+
+                        courseItem.addEventListener('mouseover', function() {
+                            this.style.backgroundColor = '#f0f0f0';
+                        });
+
+                        courseItem.addEventListener('mouseout', function() {
+                            this.style.backgroundColor = 'transparent';
+                        });
+
+                        courseItem.addEventListener('click', function() {
+                            selectCourse(course.course_code);
+                            courseDropdown.style.display = 'none';
+                            courseSearch.value = `${course.course_code} - ${course.course_title}`;
+                        });
+
+                        courseDropdown.appendChild(courseItem);
+                    });
+                }
+
+                courseDropdown.style.display = 'block';
+            }
+
+            // Function to select a course and populate form fields
+            function selectCourse(course_code) {
+                fetch(`/get_course_details?course_code=${course_code}`)
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Failed to fetch course details');
+                        }
+                        return response.json();
+                    })
+                    .then(course => {
+                        // Populate form fields with course details
+                        document.getElementById('course_code').value = course.course_code;
+                        document.getElementById('course_title').value = course.course_title;
+                        document.getElementById('credits').value = course.credits;
+                        document.getElementById('capcity').value = course.capcity;
+                        document.getElementById('level').value = course.level;
+
+                        // Set faculty code
+                        setTimeout(() => {
+                            const facCodeSelect = document.getElementById('faculty_code');
+                            facCodeSelect.value = course.faculty_code;
+
+                            // If the faculty code isn't in the dropdown, add it
+                            if (facCodeSelect.value !== course.faculty_code) {
+                                const option = document.createElement('option');
+                                option.value = course.faculty_code;
+                                option.textContent = course.faculty_code;
+                                facCodeSelect.appendChild(option);
+                                facCodeSelect.value = course.faculty_code;
+                            }
+                        }, 100);
+                    })
+                    .catch(error => {
+                        console.error('Error fetching course details:', error);
+                        errorText.textContent = error.message;
+                        errorMessage.style.display = 'block';
+                    });
+            }
+
             form.addEventListener('submit', function(e) {
-    e.preventDefault();
+                e.preventDefault();
 
-    // Clear any previous messages and styling
-    errorMessage.style.display = 'none';
-    successMessage.style.display = 'none';
-    errorText.textContent = '';
-    courseCodeInput.style.border = '1px solid #ccc';
+                // Clear any previous messages and styling
+                errorMessage.style.display = 'none';
+                successMessage.style.display = 'none';
+                errorText.textContent = '';
+                courseCodeInput.style.border = '1px solid #ccc';
 
-    const courseCode = courseCodeInput.value.trim();
+                const courseCode = courseCodeInput.value.trim();
 
-    if (!courseCode) {
-        errorText.textContent = "Course code is required.";
-        errorMessage.style.display = 'block';
-        courseCodeInput.focus();
-        return;
-    }
+                if (!courseCode) {
+                    errorText.textContent = "Course code is required.";
+                    errorMessage.style.display = 'block';
+                    courseCodeInput.focus();
+                    return;
+                }
 
-    // Check if course code already exists
-    fetch(`/check_course_code?course_code=${encodeURIComponent(courseCode)}`)
-        .then(response => response.json())
-        .then(data => {
-            if (data.exists) {
-                errorText.textContent = "This course code already exists. Please choose another one.";
-                errorMessage.style.display = 'block';
-                courseCodeInput.style.border = '2px solid #dc3545';
-                courseCodeInput.focus();
-                return;
-            } else {
-                // No duplicate found — proceed with form submission
+                // Submit the form
                 const formData = new FormData(form);
-                fetch('/save_course', {
+                fetch('/update_course', {
                     method: 'POST',
                     body: formData
                 })
                 .then(response => {
                     if (response.ok) {
                         successMessage.style.display = 'block';
-                        form.reset();
                         window.scrollTo({
                             top: form.offsetTop - 20,
                             behavior: 'smooth'
@@ -366,18 +488,8 @@ document.addEventListener('DOMContentLoaded', function () {
                         behavior: 'smooth'
                     });
                 });
-            }
-        })
-        .catch(error => {
-            console.error("Error checking course code:", error);
-            errorText.textContent = "Unable to validate course code. Please try again later.";
-            errorMessage.style.display = 'block';
-            window.scrollTo({
-                top: form.offsetTop - 20,
-                behavior: 'smooth'
             });
         });
-});})
     </script>
 </body>
 </html>

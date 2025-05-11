@@ -1,7 +1,10 @@
+import json
+
 from flask import Flask, render_template, redirect, url_for, request, jsonify, session, send_file
 import pyodbc  # For Microsoft SQL Server connection
 from ortools.sat.python import cp_model  # For constraint programming
 from collections import defaultdict  # Add this import at the top
+
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "e8c9f2d7b4a1c3e5f8a2d9b3c7e1f4a5"  # Ensure this is set
@@ -67,6 +70,102 @@ def get_courses_by_school(school_code):
         return []
 
 
+def get_service_courses(school_code):
+    """
+    Fetch courses from other faculties (excluding the given school_code).
+    Returns list of course dictionaries including Code, Title, course_year, credits, Capcity.
+    """
+    try:
+        # Create the connection string
+        conn_string = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={DB_CONFIG['server']};"
+            f"DATABASE={DB_CONFIG['database']};"
+            f"UID={DB_CONFIG['username']};"
+            f"PWD={DB_CONFIG['password']};"
+        )
+        connection = pyodbc.connect(conn_string)
+        cursor = connection.cursor()
+
+        # First get all distinct fac_codes excluding the current one
+        cursor.execute("SELECT DISTINCT fac_code FROM Course")
+        all_faculties = [row[0] for row in cursor.fetchall()]
+        other_faculties = [f for f in all_faculties if f != school_code]
+
+        print(f"[DEBUG] Fetching service courses from faculties: {other_faculties}")
+
+        if not other_faculties:
+            print("[INFO] No other faculties found to fetch service courses.")
+            return []
+
+        # Build query with IN clause for multiple faculties
+        placeholders = ','.join(['?'] * len(other_faculties))
+        query = f"""
+            SELECT Code, Title, course_year, credits, Capcity 
+            FROM Course 
+            WHERE fac_code IN ({placeholders})
+        """
+        cursor.execute(query, other_faculties)
+        rows = cursor.fetchall()
+        connection.close()
+
+        # Map results to list of dicts
+        courses_list = [
+            {
+                "Code": row[0],
+                "Title": row[1],
+                "course_year": map_course_year_to_numeric(row[2]),
+                "credits": row[3],
+                "capacity": row[4]
+            }
+            for row in rows
+        ]
+        return courses_list
+
+    except Exception as e:
+        print(f"[ERROR] Error fetching service courses: {e}")
+        return []
+
+@app.route("/add-service-courses")
+def add_service_courses():
+    school_code = request.args.get("school_code")
+    campus_code = request.args.get("campus_code")
+    academic_year = request.args.get("academic_year")
+    semester = request.args.get("semester")
+
+    service_courses = get_service_courses(school_code)
+
+    return render_template(
+            "add_service_courses.html",
+            service_courses=service_courses,
+            school_code=school_code,
+            campus_code=campus_code,
+            academic_year=academic_year,
+            semester=semester
+        )
+
+@app.route("/select-service-courses", methods=["POST"])
+def select_service_courses():
+    selected_courses = request.form.getlist("selected_courses")
+    school_code = request.form["school_code"]
+    campus_code = request.form["campus_code"]
+    academic_year = request.form["academic_year"]
+    semester = request.form["semester"]
+
+    print(f"[DEBUG] Selected service courses: {selected_courses}")
+
+    # Save selected service courses in session (or database)
+    session["selected_service_courses"] = selected_courses
+
+    # Redirect back to course selection page with updated context
+    return redirect(url_for(
+        "course_selection",
+        school_code=school_code,
+        campus_code=campus_code,
+        academic_year=academic_year,
+        semester=semester
+    ))
+
 def validate_instructor_credits(instructor_assignments, max_credits=21):
     """
     Validate that no instructor is assigned more than the allowed maximum credits.
@@ -108,7 +207,7 @@ def map_course_year_to_numeric(course_year):
     return mapping.get(normalized_course_year, 1)
 
 
-def get_schools_from_db():
+def get_Faculty_from_db():
     """Fetch unique fac_code values from the instructor table."""
     try:
         conn_string = (
@@ -120,7 +219,7 @@ def get_schools_from_db():
         )
         connection = pyodbc.connect(conn_string)
         cursor = connection.cursor()
-        query = "SELECT DISTINCT fac_code FROM Instructor"
+        query = "SELECT faccode FROM Faculty"
         print(f"Executing query: {query}")
         cursor.execute(query)
         rows = cursor.fetchall()
@@ -182,12 +281,12 @@ def home():
     """
     Redirect the root URL to the school selection page.
     """
-    return redirect(url_for("select_faculty"))
+    return redirect(url_for("index"))
 
 
 @app.route("/select-faculty")
 def select_faculty():
-    schools = get_schools_from_db()
+    schools =  get_Faculty_from_db()
     campuses = get_campuses_from_db()
 
     # Generate the current academic year dynamically
@@ -248,6 +347,151 @@ def get_campuses_from_db():
         print(f"Error fetching campuses from database: {e}")
         return []
 
+@app.route("/previous_semester")
+def previous_semester():
+    schools = get_Faculty_from_db()
+    campuses = get_campuses_from_db()
+
+    # Generate academic years including past years
+    from datetime import datetime
+    current_year = datetime.now().year
+    next_year = current_year + 1
+    prev_year = current_year - 1
+    academic_years = [f"{prev_year}-{current_year}", f"{current_year}-{next_year}", f"{next_year}-{next_year + 1}"]
+
+    # Define semesters
+    semesters = ["Fall", "Spring", "Summer"]
+
+    print(f"Rendering previous semester page with {len(schools)} schools and {len(campuses)} campuses.")
+    return render_template(
+        "previous_semester.html",
+        schools=schools,
+        campuses=campuses,
+        academic_years=academic_years,
+        semesters=semesters
+    )
+@app.route("/view_previous_semester", methods=["POST"])
+def view_previous_semester():
+    """
+    Retrieve schedule data from the database based on the selected parameters
+    and display it in the previous_semester.html template.
+    """
+    # Get form data
+    school_code = request.form.get("school_code")
+    campus_code = request.form.get("campus_code")
+    academic_year = request.form.get("academic_year")
+    semester = request.form.get("semester")
+
+    print(f"Retrieving schedule for School: {school_code}, Campus: {campus_code}, Year: {academic_year}, Semester: {semester}")
+
+    try:
+        # Create the connection string
+        conn_string = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={DB_CONFIG['server']};"
+            f"DATABASE={DB_CONFIG['database']};"
+            f"UID={DB_CONFIG['username']};"
+            f"PWD={DB_CONFIG['password']};"
+        )
+
+        # Establish the database connection
+        connection = pyodbc.connect(conn_string)
+        cursor = connection.cursor()
+
+        # Query to retrieve schedule data
+        query = """
+        SELECT CourseNumber, Code, Section, FACUSER, Room, 
+               STIME, ETIME, M, T, W, TH, F, S, 
+               Campus, University, AllowCross, SchedulingType, 
+               BypassPayroll, Capacity
+        FROM Schedule 
+        WHERE Year = ? AND Semester = ? AND fac_code = ? AND Campus = ?
+        ORDER BY CourseNumber
+        """
+        cursor.execute(query, (academic_year, semester, school_code, campus_code))
+        rows = cursor.fetchall()
+
+        # Convert rows to a list of dictionaries for easier handling in the template
+        schedule_data = []
+        for row in rows:
+            schedule_data.append({
+                "CourseNumber": row[0],
+                "Code": row[1],
+                "Section": row[2],
+                "FACUSER": row[3],
+                "Room": row[4],
+                "STIME": row[5],
+                "ETIME": row[6],
+                "M": 1 if row[7] else 0,
+                "T": 1 if row[8] else 0,
+                "W": 1 if row[9] else 0,
+                "TH": 1 if row[10] else 0,
+                "F": 1 if row[11] else 0,
+                "S": 1 if row[12] else 0,
+                "Campus": row[13],
+                "University": row[14],
+                "AllowCross": row[15],
+                "SchedulingType": row[16],
+                "BypassPayroll": row[17],
+                "Capacity": row[18]
+            })
+
+        # Close the connection
+        cursor.close()
+        connection.close()
+
+        # Get schools and campuses for the form
+        schools = get_Faculty_from_db()
+        campuses = get_campuses_from_db()
+
+        # Generate academic years including past years
+        from datetime import datetime
+        current_year = datetime.now().year
+        next_year = current_year + 1
+        prev_year = current_year - 1
+        academic_years = [f"{prev_year}-{current_year}", f"{current_year}-{next_year}", f"{next_year}-{next_year + 1}"]
+
+        # Define semesters
+        semesters = ["Fall", "Spring", "Summer"]
+
+        print(f"Retrieved {len(schedule_data)} schedule records.")
+        return render_template(
+            "previous_semester.html",
+            schools=schools,
+            campuses=campuses,
+            academic_years=academic_years,
+            semesters=semesters,
+            schedule_data=schedule_data,
+            selected_school=school_code,
+            selected_campus=campus_code,
+            selected_year=academic_year,
+            selected_semester=semester
+        )
+
+    except Exception as e:
+        print(f"Error retrieving schedule data: {e}")
+        # Get schools and campuses for the form
+        schools = get_schools_from_db()
+        campuses = get_campuses_from_db()
+
+        # Generate academic years including past years
+        from datetime import datetime
+        current_year = datetime.now().year
+        next_year = current_year + 1
+        prev_year = current_year - 1
+        academic_years = [f"{prev_year}-{current_year}", f"{current_year}-{next_year}", f"{next_year}-{next_year + 1}"]
+
+        # Define semesters
+        semesters = ["Fall", "Spring", "Summer"]
+
+        return render_template(
+            "previous_semester.html",
+            schools=schools,
+            campuses=campuses,
+            academic_years=academic_years,
+            semesters=semesters,
+            error=f"Error retrieving schedule data: {e}"
+        )
 
 @app.route("/submit_school", methods=["POST"])
 def submit_school():
@@ -268,9 +512,15 @@ def submit_school():
         semester=semester
     ))
 
-def get_instructors_by_campus(campus_code, school_code):
-    """Fetch instructors from the database based on the selected campus and school."""
+def get_instructors_by_campus(campus_code, school_code, year, semester):
+    """
+    Fetch instructors:
+    - All active instructors from the specified campus (campus_code)
+    - Plus active instructors from other campuses who have availability in the specified campus
+      for the given year and semester.
+    """
     try:
+        # Create the connection string
         conn_string = (
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
             f"SERVER={DB_CONFIG['server']};"
@@ -278,26 +528,36 @@ def get_instructors_by_campus(campus_code, school_code):
             f"UID={DB_CONFIG['username']};"
             f"PWD={DB_CONFIG['password']};"
         )
-        print(f"Connecting to database to fetch instructors for campus_code: {campus_code} and school_code: {school_code}")
+        # Establish the database connection
         connection = pyodbc.connect(conn_string)
         cursor = connection.cursor()
+
+        # Query to get instructors from the current campus OR available there this term
         query = """
-            SELECT facuser, fac_code, campusID
-            FROM Instructor
-            WHERE campusID = ? AND fac_code = ?
+            SELECT DISTINCT i.facuser, i.fac_code, i.campusID, i.title, i.fname, i.mname, i.lname
+            FROM Instructor i
+            LEFT JOIN Instructor_Availability ia 
+                ON i.facuser = ia.facuser
+                AND ia.year = ?
+                AND ia.semester = ?
+            WHERE i.Active = 1
+              AND i.fac_code = ?
+              AND (i.campusID = ? OR ia.campusID = ?)
         """
-        print(f"Executing query: {query} with params: {campus_code}, {school_code}")
-        cursor.execute(query, campus_code, school_code)
+        cursor.execute(query, year, semester, school_code, campus_code, campus_code)
         rows = cursor.fetchall()
-        print(f"Fetched {len(rows)} instructors from the database.")
-        cursor.close()
         connection.close()
+
+        # Construct the list of instructors
         instructors_list = [
             {
-                "identifier": row[0],
                 "facuser": row[0],
                 "fac_code": row[1],
-                "campusID": row[2]
+                "campusID": row[2],
+                "title": row[3],
+                "fname": row[4],
+                "mname": row[5],
+                "lname": row[6]
             }
             for row in rows
         ]
@@ -305,7 +565,6 @@ def get_instructors_by_campus(campus_code, school_code):
     except Exception as e:
         print(f"Error fetching instructors from database: {e}")
         return []
-
 
 def generate_summer_schedule():
     try:
@@ -326,6 +585,7 @@ def generate_summer_schedule():
         # Retrieve school_code and campus_code from hidden fields
         school_code = request.form.get("school_code")
         campus_code = request.form.get("campus_code")
+        academic_year = request.form.get("academic_year")
 
         # Validate school_code and campus_code
         if not school_code or not campus_code:
@@ -350,7 +610,9 @@ def generate_summer_schedule():
         for course_with_section in selected_courses:
             base_course, section_letter = course_with_section.rsplit("_", 1)
             num_students = int(request.form[f"students_{course_with_section}"])
-            instructor = request.form[f"instructor_{course_with_section}"]
+            instructor_key = f"instructor_{course_with_section}"
+            instructor = request.form.get(instructor_key, "TBA")  # Default to TBA
+            instructor_assignments[course_with_section] = instructor
             year = int(request.form[f"year_{course_with_section}"])
             semester = get_semester(base_course)
             course_semesters[course_with_section] = semester  # This line now works
@@ -423,8 +685,10 @@ def generate_summer_schedule():
                 s1 = all_sections[i]
                 s2 = all_sections[j]
 
-                # Existing same instructor constraint (hard constraint)
-                if instructor_assignments[s1] == instructor_assignments[s2]:
+                # Only apply same-instructor constraint if both have assigned instructors (not TBA)
+                inst1 = instructor_assignments[s1]
+                inst2 = instructor_assignments[s2]
+                if inst1 == inst2 and inst1 != "TBA":
                     model.Add(slot_vars[s1] != slot_vars[s2])
 
                 # Check same year and different courses
@@ -490,6 +754,39 @@ def generate_summer_schedule():
             # Debugging: Log the generated schedule
             print(f"Generated Schedule: {sorted_schedule}")
 
+            # Function to filter courses with 'TBA' instructors
+            def filter_tba_courses(schedule):
+                filtered_schedule = {}
+
+                for key, value in schedule.items():
+                    # Only check course entries (skip completion_time or other metadata)
+                    if isinstance(value, dict) and 'instructor' in value:
+                        if value['instructor'] != 'TBA':
+                            filtered_schedule[key] = value
+                    else:
+                        # Keep non-course keys like 'completion_time'
+                        filtered_schedule[key] = value
+
+                return filtered_schedule
+
+            # Apply filtering
+            filtered_schedule = filter_tba_courses(sorted_schedule)
+
+            # Print result
+            print(f"Generated Relaxed Schedule: {filtered_schedule}")
+
+            semester = request.form.get("semester")
+
+            save_result = save_schedule_to_database(
+                filtered_schedule,
+                school_code,
+                campus_code,
+                academic_year,
+                semester
+            )
+
+            if not save_result:
+                print("Warning: Failed to save schedule to database")
             # Return the sorted schedule as JSON
             return jsonify(sorted_schedule)
         else:
@@ -516,7 +813,7 @@ def schedule_handler():
                 return jsonify({"error": "Required parameters are missing."}), 400
 
             # Fetch instructor availability based on school_code, campus_code, academic_year, and semester
-            response, status_code = fetch_instructor_availability_internal(
+            response, status_code = fetch_instructor_availability_internal_for_course_selection(
                 school_code, academic_year, semester, campus_code  # Pass campus_code
             )
             if "error" in response:
@@ -927,6 +1224,8 @@ def generate_relaxed_schedule():
         # Retrieve school_code and campus_code from hidden fields
         school_code = request.form.get("school_code")
         campus_code = request.form.get("campus_code")
+        academic_year = request.form.get("academic_year")
+        semester = request.form.get("semester")
         # Validate school_code and campus_code
         if not school_code or not campus_code:
             return jsonify({"error": "School code and campus code are required."}), 400
@@ -952,8 +1251,9 @@ def generate_relaxed_schedule():
             print("No prerequisites found for the selected courses.")
         for course_with_section in selected_courses:
             base_course, section_letter = course_with_section.rsplit("_", 1)
-            num_students = int(request.form[f"students_{course_with_section}"])
-            instructor = request.form[f"instructor_{course_with_section}"]
+            instructor_key = f"instructor_{course_with_section}"
+            instructor = request.form.get(instructor_key, "TBA")  # Default to TBA
+            instructor_assignments[course_with_section] = instructor
             year = int(request.form[f"year_{course_with_section}"])
             # Process user-specified time (optional field)
             time_str = request.form.get(f"time_{course_with_section}", "").strip()
@@ -1077,7 +1377,9 @@ def generate_relaxed_schedule():
         # Ensure no instructor is assigned to more than one course at the same time
         instructor_sections = defaultdict(list)
         for section in all_sections:
-            instr_id = instructor_assignments[section]
+            instr_id = instructor_assignments[section]# Skip TBA instructors (they can teach multiple courses at the same time)
+            if instr_id == "TBA":
+                continue
             instructor_sections[instr_id].append(section)
 
         for instr_id, sections in instructor_sections.items():
@@ -1169,7 +1471,40 @@ def generate_relaxed_schedule():
             sorted_schedule = {section: details for section, details in sorted_sections}
             sorted_schedule["completion_time"] = schedule["completion_time"]
             # Debugging: Log the generated schedule
+
             print(f"Generated Relaxed Schedule: {sorted_schedule}")
+
+            # Function to filter courses with 'TBA' instructors
+            def filter_tba_courses(schedule):
+                filtered_schedule = {}
+
+                for key, value in schedule.items():
+                    # Only check course entries (skip completion_time or other metadata)
+                    if isinstance(value, dict) and 'instructor' in value:
+                        if value['instructor'] != 'TBA':
+                            filtered_schedule[key] = value
+                    else:
+                        # Keep non-course keys like 'completion_time'
+                        filtered_schedule[key] = value
+
+                return filtered_schedule
+
+            # Apply filtering
+            filtered_schedule = filter_tba_courses(sorted_schedule)
+
+            # Print result
+            print(f"Generated Relaxed Schedule: {filtered_schedule}")
+
+            save_result = save_schedule_to_database(
+                filtered_schedule,
+                school_code,
+                campus_code,
+                academic_year,
+                semester
+            )
+
+            if not save_result:
+                print("Warning: Failed to save schedule to database")
             # Return the sorted schedule as JSON
             return jsonify(sorted_schedule)
         else:
@@ -1220,7 +1555,7 @@ def instructor_availability():
     print(f"Fetching instructors for school_code: {school_code}, campus_code: {campus_code}")
     print(f"Academic Year: {academic_year}, Semester: {semester}")
 
-    instructors = get_instructors_by_campus(campus_code, school_code)
+    instructors = get_instructors_by_campus(campus_code, school_code , academic_year, semester)
     return render_template(
         "instructor_availability.html",
         instructors=instructors,
@@ -1232,51 +1567,169 @@ def instructor_availability():
     )
 
 
+def get_instructors_for_course_selection(campus_code, school_code):
+    """Fetch instructors from the database based on the selected campus and school."""
+    try:
+        conn_string = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={DB_CONFIG['server']};"
+            f"DATABASE={DB_CONFIG['database']};"
+            f"UID={DB_CONFIG['username']};"
+            f"PWD={DB_CONFIG['password']};"
+        )
+        print(f"Connecting to database to fetch instructors for campus_code: {campus_code} and school_code: {school_code}")
+        connection = pyodbc.connect(conn_string)
+        cursor = connection.cursor()
+        query = """
+            SELECT facuser, fac_code, campusID
+            FROM Instructor
+            WHERE campusID = ? AND fac_code = ?
+        """
+        print(f"Executing query: {query} with params: {campus_code}, {school_code}")
+        cursor.execute(query, campus_code, school_code)
+        rows = cursor.fetchall()
+        print(f"Fetched {len(rows)} instructors from the database.")
+        cursor.close()
+        connection.close()
+        instructors_list = [
+            {
+                "identifier": row[0],
+                "facuser": row[0],
+                "fac_code": row[1],
+                "campusID": row[2]
+            }
+            for row in rows
+        ]
+        return instructors_list
+    except Exception as e:
+        print(f"Error fetching instructors from database: {e}")
+        return []
+
+
 @app.route("/course-selection")
 def course_selection():
     school_code = request.args.get("school_code")
     campus_code = request.args.get("campus_code")
-    academic_year = request.args.get("academic_year")  # New parameter
-    semester = request.args.get("semester")  # New parameter
-    print(
-        f"[DEBUG] Rendering course selection page for school_code: {school_code}, campus_code: {campus_code}, year: {academic_year}, semester: {semester}"
-    )
-    # Fetch courses and instructors
-    instructors = get_instructors_by_campus(campus_code, school_code)
+    academic_year = request.args.get("academic_year")
+    semester = request.args.get("semester")
+
+    print(f"[DEBUG] Rendering course selection for school: {school_code}, campus: {campus_code}")
+
+    # Fetch regular courses and instructors
+    instructors = get_instructors_for_course_selection(campus_code, school_code)
     courses = get_courses_by_school(school_code)
-    # Fetch instructor availability and store it in the session variable
+
+    # Fetch selected service courses from session
+    service_courses_json = session.get("selected_service_courses", [])
+    service_courses = []
+
+    for course_str in service_courses_json:
+        import json
+        course_data = json.loads(course_str)
+        course_data["Title"] = f"{course_data['Title']} (Service)"  # Mark as service
+        service_courses.append(course_data)
+
+    # Merge regular + service courses
+    all_courses = courses + service_courses
+
+    # Fetch instructor availability
     try:
-        print("[DEBUG] Fetching instructor availability...")
-        response, status_code = fetch_instructor_availability_internal(
-            school_code, academic_year, semester  # Pass all required arguments
-        )
-        print(f"[DEBUG] Response from fetch_instructor_availability_internal: {response}")
-        if "error" in response:
-            print(f"[ERROR] Error fetching instructor availability: {response['error']}")
-            session["instructor_availability"] = {}
-        else:
+        response, status_code = fetch_instructor_availability_internal_for_course_selection(school_code, academic_year, semester)
+        if "error" not in response:
             session["instructor_availability"] = response.get("instructor_availability", {})
-            print(f"[DEBUG] Session instructor_availability set to: {session['instructor_availability']}")
+        else:
+            session["instructor_availability"] = {}
     except Exception as e:
-        print(f"[ERROR] Error fetching instructor availability: {e}")
+        print(f"[ERROR] Fetching instructor availability: {e}")
         session["instructor_availability"] = {}
-    # Pass the session variable to the template
+
     instructor_availability = session.get("instructor_availability", {})
-    print(f"[DEBUG] Instructor availability passed to frontend: {instructor_availability}")
+
     return render_template(
         "course_selection.html",
-        courses=courses,
+        courses=all_courses,  # Includes both regular and service courses
         instructors=instructors,
         time_slots=time_slots,
         instructor_availability=instructor_availability,
         school_code=school_code,
         campus_code=campus_code,
-        academic_year=academic_year,  # Pass academic year to template
-        semester=semester  # Pass semester to template
+        academic_year=academic_year,
+        semester=semester
     )
 
 
 def fetch_instructor_availability_internal(school_code, academic_year, semester, campus_code):
+    try:
+        # Define time slots for summer and regular semesters
+        summer_time_slots = ['MWTTH 8:00-9:50', 'MWTTH 10:00-11:50', 'MWTTH 12:00-1:50']
+        regular_time_slots = [
+            "MW 8:00-9:15 AM", "MW 9:30-10:45 AM", "MW 11:00 AM-12:15 PM",
+            "MW 12:30-1:45 PM", "MW 2:00-3:15 PM", "MW 3:30-4:45 PM",
+            "MW 5:00-6:15 PM", "MW 6:30-8:45 PM",
+            "TTh 8:00-9:15 AM", "TTh 9:30-11:45 AM", "TTh 11:00 AM-12:15 PM",
+            "TTh 12:30-1:45 PM", "TTh 2:00-3:15 PM", "TTh 3:30-4:45 PM",
+            "TTh 5:00-6:15 PM", "TTh 6:30-8:45 PM"
+        ]
+        # Select the appropriate time slots based on the semester
+        time_slots = summer_time_slots if semester == "Summer" else regular_time_slots
+
+        # Connect to the database
+        conn_string = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={DB_CONFIG['server']};"
+            f"DATABASE={DB_CONFIG['database']};"
+            f"UID={DB_CONFIG['username']};"
+            f"PWD={DB_CONFIG['password']};"
+        )
+        print(f"[DEBUG] Connecting to database for school_code: {school_code}, academic_year: {academic_year}, semester: {semester}, campus_code: {campus_code}")
+        connection = pyodbc.connect(conn_string)
+        cursor = connection.cursor()
+
+        # Fetch instructor availability based on school_code, academic_year, semester, and campus_code
+        query = """
+            SELECT ia.facuser, ia.time_slot, i.title, i.fname, i.mname, i.lname
+            FROM Instructor_Availability ia
+            INNER JOIN Instructor i ON ia.facuser = i.facuser
+            WHERE i.fac_code = ?
+              AND ia.year = ?
+              AND ia.semester = ?
+              AND ia.campusID = ?
+        """
+        print(f"[DEBUG] Executing query: {query} with params: {school_code}, {academic_year}, {semester}, {campus_code}")
+        cursor.execute(query, school_code, academic_year, semester, campus_code)
+        rows = cursor.fetchall()
+        print(f"[DEBUG] Fetched {len(rows)} rows from the database.")
+
+        # Organize data into a dictionary
+        instructor_availability = {}
+        for row in rows:
+            facuser = row.facuser
+            time_slot = row.time_slot
+            # Include only valid time slots for the semester
+            if time_slot in time_slots:
+                if facuser not in instructor_availability:
+                    instructor_availability[facuser] = {
+                        "time_slots": [],
+                        "name": f"{row.title} {row.fname} {row.mname or ''} {row.lname}".strip()
+                    }
+                instructor_availability[facuser]["time_slots"].append(time_slot)
+
+        # Add TBA with all time slots
+        instructor_availability["TBA"] = {
+            "time_slots": time_slots.copy(),
+            "name": "To Be Announced"
+        }
+        print(f"[DEBUG] Organized instructor availability: {instructor_availability}")
+
+        # Close the connection
+        cursor.close()
+        connection.close()
+        return {"instructor_availability": instructor_availability}, 200
+    except Exception as e:
+        print(f"[ERROR] Error fetching instructor availability: {e}")
+        return {"error": str(e)}, 500
+
+def fetch_instructor_availability_internal_for_course_selection(school_code, academic_year, semester, campus_code):
     try:
         # Define time slots for summer and regular semesters
         summer_time_slots = ['MWTTH 8:00-9:50', 'MWTTH 10:00-11:50', 'MWTTH 12:00-1:50']
@@ -1328,6 +1781,9 @@ def fetch_instructor_availability_internal(school_code, academic_year, semester,
                 if facuser not in instructor_availability:
                     instructor_availability[facuser] = []
                 instructor_availability[facuser].append(time_slot)
+            if "TBA" not in instructor_availability:
+                instructor_availability["TBA"] = time_slots.copy()
+                print("[DEBUG] Added 'TBA' to instructor_availability with all time slots.")
         print(f"[DEBUG] Organized instructor availability: {instructor_availability}")
 
         # Close the connection
@@ -1380,11 +1836,30 @@ def fetch_all_instructors():
 
 @app.route("/fetch_unavailable_instructors")
 def fetch_unavailable_instructors():
-    """Fetch instructors not associated with the current campus based on the updated Instructor table."""
+    """Fetch instructors who are NOT currently available at the specified campus for the given year/semester."""
     try:
         school_code = request.args.get("school_code")
         campus_code = request.args.get("campus_code")
+        year = request.args.get("year")
+        semester = request.args.get("semester")
 
+
+        if not school_code:
+            return jsonify({"error": "Missing required parameter: school_code"}), 400
+        if not campus_code:
+            return jsonify({"error": "Missing required parameter: campus_code"}), 400
+        if not year:
+            return jsonify({"error": "Missing required parameter: year"}), 400
+        if not semester:
+            return jsonify({"error": "Missing required parameter: semester"}), 400
+
+        # Step 1: Get the list of instructors already available at the campus (same as get_instructors_by_campus)
+        current_instructors = get_instructors_by_campus(campus_code, school_code, year, semester)
+        current_facusers = [instructor['facuser'] for instructor in current_instructors]
+
+        print(f"Excluding instructors: {current_facusers}")
+
+        # Step 2: Create DB connection
         conn_string = (
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
             f"SERVER={DB_CONFIG['server']};"
@@ -1392,24 +1867,34 @@ def fetch_unavailable_instructors():
             f"UID={DB_CONFIG['username']};"
             f"PWD={DB_CONFIG['password']};"
         )
-        print(f"Fetching unavailable instructors for school_code: {school_code}, campus_code: {campus_code}")
         connection = pyodbc.connect(conn_string)
         cursor = connection.cursor()
 
-        # Updated query to use campusID from Instructor table
-        query = """
-            SELECT facuser, title, fname, mname, lname
-            FROM Instructor
-            WHERE fac_code = ? AND Active = 1
-              AND (campusID IS NULL OR campusID != ?)
-        """
-        cursor.execute(query, school_code, campus_code)
+        # Step 3: Fetch all active instructors in the school EXCEPT those already included above
+        if current_facusers:
+            placeholders = ','.join('?' * len(current_facusers))
+            query = f"""
+                SELECT facuser, title, fname, mname, lname
+                FROM Instructor
+                WHERE fac_code = ? AND Active = 1 AND facuser NOT IN ({placeholders})
+            """
+            params = [school_code] + current_facusers
+        else:
+            query = """
+                SELECT facuser, title, fname, mname, lname
+                FROM Instructor
+                WHERE fac_code = ? AND Active = 1
+            """
+            params = [school_code]
+
+        cursor.execute(query, params)
         rows = cursor.fetchall()
 
         cursor.close()
         connection.close()
 
-        instructors_list = [
+        # Build response
+        unavailable_list = [
             {
                 "facuser": row[0],
                 "title": row[1],
@@ -1419,7 +1904,8 @@ def fetch_unavailable_instructors():
             }
             for row in rows
         ]
-        return jsonify(instructors_list), 200
+
+        return jsonify(unavailable_list), 200
 
     except Exception as e:
         print(f"Error fetching unavailable instructors: {e}")
@@ -1516,6 +2002,20 @@ def save_instructor_availability():
         except Exception as e:
             print(f"Error connecting to the database: {e}")
             return jsonify({"error": "Database connection failed."}), 500
+
+        # Delete previous records for the same semester, year, and campus
+        try:
+            with connection.cursor() as cursor:
+                delete_query = """
+                    DELETE FROM Instructor_Availability 
+                    WHERE year = ? AND semester = ? AND campusID = ?
+                """
+                cursor.execute(delete_query, (academic_year, semester, campus_code))
+                connection.commit()
+                print(f"Deleted previous availability records for {academic_year} {semester} {campus_code}")
+        except Exception as e:
+            print(f"Error deleting previous records: {e}")
+            return jsonify({"error": "Failed to delete previous records."}), 500
 
         # Define time slots for MW, TTh, and Summer
         mw_time_slots = [
@@ -1762,6 +2262,58 @@ def save_course():
         print(f"Error saving course: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/update_instructor', methods=['POST'])
+def update_instructor():
+    facuser = request.form.get('facuser')
+    title = request.form.get('title')
+    fname = request.form.get('fname')
+    mname = request.form.get('mname')
+    lname = request.form.get('lname')
+    accountEmail = request.form.get('accountEmail') or None
+    division = request.form.get('division')
+    fac_code = request.form.get('fac_code')
+    campusID = request.form.get('campusID')
+    active = request.form.get('active')  # 'Yes' or 'No'
+    active_bit = 1 if active == "Yes" else 0
+
+    if not facuser:
+        return jsonify({"error": "Faculty user is required"}), 400
+
+    try:
+        conn_str = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={DB_CONFIG['server']};"
+            f"DATABASE={DB_CONFIG['database']};"
+            f"UID={DB_CONFIG['username']};"
+            f"PWD={DB_CONFIG['password']};"
+        )
+        connection = pyodbc.connect(conn_str)
+        cursor = connection.cursor()
+
+        # Check if instructor exists
+        check_query = "SELECT COUNT(*) FROM instructor WHERE facuser = ?"
+        cursor.execute(check_query, (facuser,))
+        count = cursor.fetchone()[0]
+
+        if count == 0:
+            return jsonify({"error": "Instructor not found"}), 404
+
+        # Update instructor
+        query = """
+        UPDATE instructor 
+        SET title = ?, fname = ?, mname = ?, lname = ?, accountEmail = ?, 
+            Division = ?, fac_code = ?, campusID = ?, Active = ?
+        WHERE facuser = ?
+        """
+        cursor.execute(query, (title, fname, mname, lname, accountEmail, division,
+                              fac_code, campusID, active_bit, facuser))
+        connection.commit()
+        return jsonify({"message": "Instructor updated successfully"}), 200
+    except Exception as e:
+        print("Error updating instructor:", e)
+        return jsonify({"error": f"Failed to update instructor: {str(e)}"}), 500
+    finally:
+        connection.close()
 @app.route("/index")
 def index():
         """
@@ -1772,9 +2324,16 @@ def index():
 @app.route("/insert_course")
 def insert_course():
         """
-        Render the index page.
+        Render the insert course page.
         """
         return render_template("insert_course.html")
+
+@app.route("/edit_course")
+def edit_course():
+        """
+        Render the edit course page.
+        """
+        return render_template("edit_course.html")
 
 
 @app.route('/get_faculties_by_school')
@@ -1805,7 +2364,7 @@ def get_faculties_by_school():
     finally:
         connection.close()
 
-def get_schools_from_db1():
+def get_schools_from_db():
     try:
         conn_str = (
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
@@ -1829,7 +2388,7 @@ def get_schools_from_db1():
 
 @app.route('/insert_instructor')
 def insert_instructor():
-    schools = get_schools_from_db1()
+    schools = get_schools_from_db()
     campuses = get_campuses_from_db()  # assuming you already have this
     return render_template('insert_instructor.html', schools=schools, campuses=campuses)
 
@@ -1859,29 +2418,6 @@ def check_facuser():
     finally:
         connection.close()
 
-@app.route('/get_faculties')
-def get_faculties():
-    try:
-        conn_str = (
-            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-            f"SERVER={DB_CONFIG['server']};"
-            f"DATABASE={DB_CONFIG['database']};"
-            f"UID={DB_CONFIG['username']};"
-            f"PWD={DB_CONFIG['password']};"
-        )
-        connection = pyodbc.connect(conn_str)
-        cursor = connection.cursor()
-        query = "SELECT DISTINCT faccode FROM Faculty ORDER BY faccode ASC"
-        cursor.execute(query)
-        rows = cursor.fetchall()
-        faculties = [row[0] for row in rows]
-        return jsonify(faculties)
-    except Exception as e:
-        print("Error fetching faculty codes:", e)
-        return jsonify([])
-    finally:
-        connection.close()
-
 @app.route('/check_course_code', methods=['GET'])
 def check_course_code():
     course_code = request.args.get('course_code')
@@ -1908,6 +2444,440 @@ def check_course_code():
     finally:
         connection.close()
 
+@app.route('/update_course', methods=['POST'])
+def update_course():
+    try:
+        # Get form data
+        course_code = request.form.get("course_code")
+        course_title = request.form.get("course_title")
+        credits = request.form.get("credits")
+        capcity = request.form.get("capcity")
+        level = request.form.get("level")
+        faculty_code = request.form.get("faculty_code")
+
+        # Validate input
+        if not course_code:
+            return jsonify({"error": "Course code is required"}), 400
+
+        # Database connection
+        conn_string = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={DB_CONFIG['server']};"
+            f"DATABASE={DB_CONFIG['database']};"
+            f"UID={DB_CONFIG['username']};"
+            f"PWD={DB_CONFIG['password']};"
+        )
+        connection = pyodbc.connect(conn_string)
+        cursor = connection.cursor()
+
+        # Check if course exists
+        check_query = "SELECT COUNT(*) FROM Course WHERE Code = ?"
+        cursor.execute(check_query, (course_code,))
+        count = cursor.fetchone()[0]
+
+        if count == 0:
+            cursor.close()
+            connection.close()
+            return jsonify({"error": "Course not found"}), 404
+
+        # Update the course
+        update_query = """
+            UPDATE Course 
+            SET Title = ?, Credits = ?, Capcity = ?, Level = ?, fac_code = ?
+            WHERE Code = ?
+        """
+        cursor.execute(update_query, (
+            course_title,
+            credits,
+            capcity,
+            level,
+            faculty_code,
+            course_code
+        ))
+        connection.commit()
+
+        cursor.close()
+        connection.close()
+
+        return jsonify({"message": "Course updated successfully"}), 200
+    except Exception as e:
+        print(f"Error updating course: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/get_course_details', methods=['GET'])
+def get_course_details():
+    course_code = request.args.get('course_code')
+    if not course_code:
+        return jsonify({"error": "Course code is required"}), 400
+
+    try:
+        conn_str = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={DB_CONFIG['server']};"
+            f"DATABASE={DB_CONFIG['database']};"
+            f"UID={DB_CONFIG['username']};"
+            f"PWD={DB_CONFIG['password']};"
+        )
+        connection = pyodbc.connect(conn_str)
+        cursor = connection.cursor()
+        query = """
+        SELECT Code, Title, Credits, Capcity, Level, fac_code, course_year
+        FROM Course 
+        WHERE Code = ?
+        """
+        cursor.execute(query, course_code)
+        row = cursor.fetchone()
+
+        if not row:
+            return jsonify({"error": "Course not found"}), 404
+
+        course = {
+            "course_code": row[0],
+            "course_title": row[1],
+            "credits": row[2],
+            "capcity": row[3],
+            "level": row[4],
+            "faculty_code": row[5],
+            "course_year": row[6] if row[6] else ""
+        }
+
+        return jsonify(course), 200
+    except Exception as e:
+        print("Error fetching course details:", e)
+        return jsonify({"error": "Failed to fetch course details"}), 500
+    finally:
+        connection.close()
+
+
+@app.route("/fetch_all_courses")
+def fetch_all_courses():
+    """Fetch all courses from the database."""
+    try:
+        conn_string = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={DB_CONFIG['server']};"
+            f"DATABASE={DB_CONFIG['database']};"
+            f"UID={DB_CONFIG['username']};"
+            f"PWD={DB_CONFIG['password']};"
+        )
+        connection = pyodbc.connect(conn_string)
+        cursor = connection.cursor()
+
+        query = """
+            SELECT Code, Title
+            FROM Course
+        """
+        cursor.execute(query)
+        rows = cursor.fetchall()
+
+        cursor.close()
+        connection.close()
+
+        courses_list = [
+            {
+                "course_code": row[0],
+                "course_title": row[1]
+            }
+            for row in rows
+        ]
+        return jsonify(courses_list), 200
+
+    except Exception as e:
+        print(f"Error fetching all courses: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/edit_instructor')
+def edit_instructor():
+    campuses = get_campuses_from_db()
+    return render_template('edit_instructor.html', campuses=campuses)
+
+
+@app.route('/get_instructor_details', methods=['GET'])
+def get_instructor_details():
+    facuser = request.args.get('facuser')
+    if not facuser:
+        return jsonify({"error": "Faculty user is required"}), 400
+
+    try:
+        conn_str = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={DB_CONFIG['server']};"
+            f"DATABASE={DB_CONFIG['database']};"
+            f"UID={DB_CONFIG['username']};"
+            f"PWD={DB_CONFIG['password']};"
+        )
+        connection = pyodbc.connect(conn_str)
+        cursor = connection.cursor()
+        query = """
+        SELECT facuser, title, fname, mname, lname, accountEmail, Division, fac_code, campusID, Active
+        FROM instructor 
+        WHERE facuser = ?
+        """
+        cursor.execute(query, facuser)
+        row = cursor.fetchone()
+
+        if not row:
+            return jsonify({"error": "Instructor not found"}), 404
+
+        instructor = {
+            "facuser": row[0],
+            "title": row[1],
+            "fname": row[2],
+            "mname": row[3],
+            "lname": row[4],
+            "accountEmail": row[5] if row[5] else "",
+            "division": row[6] if row[6] else "",
+            "fac_code": row[7],
+            "campusID": row[8],
+            "active": "Yes" if row[9] == 1 else "No"
+        }
+
+        return jsonify(instructor), 200
+    except Exception as e:
+        print("Error fetching instructor details:", e)
+        return jsonify({"error": "Failed to fetch instructor details"}), 500
+    finally:
+        connection.close()
+
+@app.route('/get_faculties')
+def get_faculties():
+    try:
+        conn_str = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={DB_CONFIG['server']};"
+            f"DATABASE={DB_CONFIG['database']};"
+            f"UID={DB_CONFIG['username']};"
+            f"PWD={DB_CONFIG['password']};"
+        )
+        connection = pyodbc.connect(conn_str)
+        cursor = connection.cursor()
+        query = "SELECT DISTINCT faccode FROM Faculty ORDER BY faccode ASC"
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        faculties = [row[0] for row in rows]
+        return jsonify(faculties)
+    except Exception as e:
+        print("Error fetching faculty codes:", e)
+        return jsonify([])
+    finally:
+        connection.close()
+
+
+def check_semester_exists(cursor, year, semester):
+    """
+    Check if a Year and Semester combination exists in the Semester table.
+
+    Args:
+        cursor: Database cursor
+        year (str): The academic year
+        semester (str): The semester (Fall, Spring, Summer)
+
+    Returns:
+        bool: True if the combination exists, False otherwise
+    """
+    query = """
+    SELECT COUNT(*) FROM Semester 
+    WHERE Year = ? AND Season = ?
+    """
+    cursor.execute(query, (year, semester))
+    count = cursor.fetchone()[0]
+    return count > 0
+
+def create_semester_entry(cursor, connection, year, semester):
+    """
+    Create a new entry in the Semester table.
+
+    Args:
+        cursor: Database cursor
+        connection: Database connection
+        year (str): The academic year
+        semester (str): The semester (Fall, Spring, Summer)
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        query = """
+        INSERT INTO Semester (Year, Season) 
+        VALUES (?, ?)
+        """
+        cursor.execute(query, (year, semester))
+        connection.commit()
+        print(f"Created new Semester entry: Year='{year}', Season='{semester}'")
+        return True
+    except Exception as e:
+        print(f"Error creating Semester entry: {e}")
+        return False
+
+def save_schedule_to_database(schedule, school_code, campus_code, academic_year, semester):
+    """
+    Save the generated schedule to the Schedule table in the database.
+    If records exist for the same semester, year, and fac_code, delete them first.
+
+    Args:
+        schedule (dict): The generated schedule data
+        school_code (str): The faculty code
+        campus_code (str): The campus code
+        academic_year (str): The academic year
+        semester (str): The semester (Fall, Spring, Summer)
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        # Create the connection string
+        conn_string = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={DB_CONFIG['server']};"
+            f"DATABASE={DB_CONFIG['database']};"
+            f"UID={DB_CONFIG['username']};"
+            f"PWD={DB_CONFIG['password']};"
+        )
+
+        # Establish the database connection
+        connection = pyodbc.connect(conn_string)
+        cursor = connection.cursor()
+
+        # Check if the Year and Semester combination exists in the Semester table
+        if not check_semester_exists(cursor, academic_year, semester):
+            print(f"The combination of Year '{academic_year}' and Semester '{semester}' does not exist in the Semester table.")
+            print("Attempting to create a new Semester entry...")
+
+            # Try to create a new entry in the Semester table
+            if not create_semester_entry(cursor, connection, academic_year, semester):
+                print("Failed to create a new Semester entry. Cannot proceed with saving the schedule.")
+                cursor.close()
+                connection.close()
+                return False
+
+            print("Successfully created a new Semester entry.")
+
+        # Check if records exist for the same semester, year, and fac_code
+        check_query = """
+        SELECT COUNT(*) FROM Schedule 
+        WHERE Year = ? AND Semester = ? AND fac_code = ? AND Campus = ?
+        """
+        cursor.execute(check_query, (academic_year, semester, school_code ,campus_code))
+        count = cursor.fetchone()[0]
+
+        # If records exist, delete them
+        if count > 0:
+            delete_query = """
+            DELETE FROM Schedule 
+            WHERE Year = ? AND Semester = ? AND fac_code = ? AND Campus = ?
+            """
+            cursor.execute(delete_query, (academic_year, semester, school_code , campus_code))
+            print(f"Deleted {count} existing schedule records for {academic_year} {semester} {school_code} {campus_code}.")
+
+        # Insert new records
+        insert_query = """
+        INSERT INTO Schedule (
+            CourseNumber, Code, Section, FACUSER, Room, 
+            STIME, ETIME, M, T, W, TH, F, S, 
+            Campus, University, AllowCross, SchedulingType, 
+            BypassPayroll, Capacity, Year, Semester, fac_code
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+
+        # Process each section in the schedule
+        row_number = 1
+        for section, details in schedule.items():
+            # Skip the completion_time entry
+            if section == "completion_time":
+                continue
+
+            # Parse section into code and section letter
+            code, section_letter = section.split("_")
+
+            # Get instructor
+            instructor = details.get("instructor", "TBA")
+
+            # Parse time
+            time_str = details.get("time", "")
+
+            # Default values
+            stime = ""
+            etime = ""
+            m, t, w, th, f, s = 0, 0, 0, 0, 0, 0
+
+            # Parse time based on semester
+            if semester.lower() == "summer":
+                # Summer time format: "MWTTH 8:00-9:50"
+                if time_str:
+                    # Extract days
+                    days = time_str.split(" ")[0]
+                    if "M" in days: m = 1
+                    if "T" in days: t = 1
+                    if "W" in days: w = 1
+                    if "TH" in days: th = 1
+                    if "F" in days: f = 1
+                    if "S" in days: s = 1
+
+                    # Extract time
+                    time_parts = time_str.split(" ")[1].split("-")
+                    stime = time_parts[0]  # e.g., '8:00'
+                    etime = time_parts[1]  # e.g., '9:50'
+
+            else:
+                # Regular semester format: "MW 8:00-9:15 AM"
+                if time_str:
+                    # Extract days
+                    days = time_str.split(" ")[0]
+                    if "M" in days: m = 1
+                    if "T" in days and "TH" not in days: t = 1
+                    if "W" in days: w = 1
+                    if "TH" in days: th = 1
+                    if "F" in days: f = 1
+                    if "S" in days: s = 1
+
+                    # Extract time range
+                    time_range = time_str.split(" ", 1)[1].strip()  # e.g., "8:00-9:15 AM"
+                    time_part, ampm = time_range.rsplit(" ", 1)  # split into time and AM/PM
+                    start_time, end_time = time_part.split("-")  # split into start and end
+
+                    stime = start_time.strip()  # now it's "8:00"
+                    etime = end_time.strip()  # now it's "9:15"
+
+            # Insert the record
+            cursor.execute(
+                insert_query,
+                (
+                    row_number,  # CourseNumber
+                    code,        # Code
+                    section_letter,  # Section
+                    instructor,  # FACUSER
+                    "TBD",       # Room (default to TBD)
+                    stime,       # STIME
+                    etime,       # ETIME
+                    m, t, w, th, f, s,  # Days of the week
+                    campus_code, # Campus
+                    1,           # University (default to 1)
+                    0,           # AllowCross (default to 0)
+                    "Normal",    # SchedulingType (default to Normal)
+                    0,           # BypassPayroll (default to 0)
+                    30,          # Capacity (default to 30)
+                    academic_year,  # Year
+                    semester,    # Semester
+                    school_code  # fac_code
+                )
+            )
+
+            row_number += 1
+
+        # Commit the transaction
+        connection.commit()
+        print(f"Successfully saved {row_number-1} schedule records to the database")
+
+        # Close the connection
+        cursor.close()
+        connection.close()
+
+        return True
+
+    except Exception as e:
+        print(f"Error saving schedule to database: {e}")
+        return False
 
 if __name__ == "__main__":
     print("Starting Flask application in debug mode.")

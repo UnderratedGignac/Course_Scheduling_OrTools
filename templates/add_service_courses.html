@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Add Service Courses</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f0f2f5;
+            margin: 0;
+            padding: 30px;
+        }
+
+        h2 {
+            text-align: center;
+            color: #333;
+        }
+
+        .container {
+            max-width: 700px;
+            margin: auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            padding: 25px 30px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: 600;
+            color: #444;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 10px 12px;
+            font-size: 15px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            box-sizing: border-box;
+        }
+
+        .course-group {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 10px;
+            background-color: #fafafa;
+        }
+
+        .group-header {
+            font-weight: bold;
+            color: #004080;
+            margin-top: 15px;
+            font-size: 16px;
+            border-bottom: 1px solid #e0e0e0;
+            padding-bottom: 5px;
+            display: block;
+        }
+
+        .course-item {
+            display: flex;
+            align-items: center;
+            padding: 6px 0;
+        }
+
+        .course-item input[type="checkbox"] {
+            margin-right: 10px;
+        }
+
+        .no-results {
+            color: #999;
+            text-align: center;
+            padding: 20px;
+        }
+
+        button {
+            margin-top: 20px;
+            padding: 12px;
+            font-size: 16px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            width: 100%;
+            transition: background-color 0.3s ease;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Available Service Courses</h2>
+
+    <!-- Search Box -->
+    <label for="courseSearch">Search by Course Code (First 4 Letters)</label>
+    <input type="text" id="courseSearch" placeholder="E.g., CSIT, MATH..." />
+
+    <!-- Form -->
+    <form id="service-course-form" action="/select-service-courses" method="POST">
+
+        <!-- Hidden Fields -->
+        <input type="hidden" name="school_code" value="{{ school_code }}">
+        <input type="hidden" name="campus_code" value="{{ campus_code }}">
+        <input type="hidden" name="academic_year" value="{{ academic_year }}">
+        <input type="hidden" name="semester" value="{{ semester }}">
+
+        <!-- Course List with Checkboxes -->
+        <label>Select Courses:</label>
+        <div class="course-group" id="courseGroupContainer">
+            <div class="no-results" style="display: none;">No matching courses found.</div>
+            {% if service_courses %}
+                {# Group courses by first 4 characters #}
+                {% set groups = {} %}
+                {% for course in service_courses %}
+                    {% set prefix = course.Code[:4] %}
+                    {% if prefix not in groups %}
+                        {% set _ = groups.update({prefix: []}) %}
+                    {% endif %}
+                    {% set _ = groups[prefix].append(course) %}
+                {% endfor %}
+
+                {# Render grouped checkboxes #}
+                {% for group_name in groups|sort %}
+                    <div class="group-header">{{ group_name }}</div>
+                    {% for course in groups[group_name] %}
+                        <div class="course-item">
+                            <input type="checkbox" name="selected_courses" value='{"Code":"{{ course.Code }}","Title":"{{ course.Title }}","course_year":{{ course.course_year}},"credits":{{ course.credits}}, "capacity":{{ course.capacity }} }'>
+                            <span>{{ course.Code }} - {{ course.Title }}</span>
+                        </div>
+                    {% endfor %}
+                {% endfor %}
+            {% else %}
+                <div class="no-results">No service courses found.</div>
+            {% endif %}
+        </div>
+
+        <button type="submit">Add Selected Courses</button>
+    </form>
+</div>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+        const searchInput = document.getElementById("courseSearch");
+
+        if (!searchInput) return;
+
+        function filterCourses() {
+            const query = searchInput.value.trim().toUpperCase();
+
+            // Get all group headers
+            const groupHeaders = document.querySelectorAll(".group-header");
+
+            groupHeaders.forEach(header => {
+                let next = header.nextElementSibling;
+                let hasVisibleCourse = false;
+
+                // Traverse until we hit the next header or end
+                while (next && !next.classList.contains("group-header")) {
+                    if (next.classList?.contains("course-item")) {
+                        const span = next.querySelector("span");
+                        if (span) {
+                            const fullText = span.textContent.trim();
+                            const courseCode = fullText.split(" - ")[0].toUpperCase(); // Extract course code
+                            const match = query ? courseCode.startsWith(query) : true;
+
+                            next.style.display = match ? "flex" : "none";
+                            if (match) hasVisibleCourse = true;
+                        }
+                    }
+                    next = next.nextElementSibling;
+                }
+
+                // Hide group header if no visible courses are found
+                header.style.display = hasVisibleCourse ? "block" : "none";
+            });
+
+            // Optional: Show/hide "no results" message
+            const noResults = document.querySelector(".no-results");
+            if (noResults) {
+                const anyVisible = [...document.querySelectorAll(".course-item")].some(
+                    item => item.style.display !== "none"
+                );
+                noResults.style.display = query && !anyVisible ? "block" : "none";
+            }
+        }
+
+        // Attach event listener
+        searchInput.addEventListener("input", filterCourses);
+    });
+</script>
+</body>
+</html>

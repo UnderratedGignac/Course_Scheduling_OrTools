@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Previous Semester</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        /* General Reset */
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f9;
+            color: #333;
+            line-height: 1.6;
+        }
+
+        /* Container Styling */
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding-top: 60px; /* Added to prevent content from being hidden behind the fixed navbar */
+        }
+
+        h1 {
+            font-size: 2rem;
+            color: #4a4a4a;
+            margin-bottom: 1.5rem;
+        }
+
+        form {
+            background: #fff;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 400px;
+            margin-bottom: 2rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: bold;
+            color: #555;
+        }
+
+        select {
+            width: 100%;
+            padding: 0.75rem;
+            margin-bottom: 1rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 1rem;
+            appearance: none; /* Removes default arrow in some browsers */
+            background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23555"><path d="M7 10l5 5 5-5z"/></svg>') no-repeat right 0.75rem center/12px 12px;
+        }
+
+        button {
+            display: inline-block;
+            width: 100%;
+            padding: 0.75rem;
+            background-color: #2c3e50;
+            color: #fff;
+            font-size: 1rem;
+            font-weight: bold;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        button:hover {
+            background-color: #34495e;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+
+        /* Placeholder Styling */
+        option[value=""] {
+            color: #aaa;
+        }
+
+        /* Navbar Styling */
+        .navbar {
+            background-color: #2c3e50;
+            color: white;
+            padding: 10px 0;
+            text-align: center;
+            width: 100%;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: 1000;
+        }
+        .navbar button {
+            background-color: transparent;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            cursor: pointer;
+            width: auto;
+            font-weight: normal;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .navbar button:hover {
+            background-color: #34495e;
+            transform: translateY(-2px);
+        }
+
+        .navbar button::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 0;
+            height: 2px;
+            background-color: white;
+            transition: width 0.3s ease;
+        }
+
+        .navbar button:hover::after {
+            width: 100%;
+        }
+
+        /* Table Styling */
+        .schedule-container {
+            width: 95%;
+            max-width: 1200px;
+            margin: 2rem auto;
+            background: #fff;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 1rem;
+        }
+
+        th, td {
+            padding: 0.75rem;
+            text-align: left;
+            border: 1px solid #ddd;
+        }
+
+        th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+
+        tr:hover {
+            background-color: #f1f1f1;
+        }
+
+        .hidden-column {
+            display: none;
+        }
+
+        .export-btn {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            background-color: #2c3e50;
+            color: #fff;
+            font-size: 1rem;
+            font-weight: bold;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 1rem;
+        }
+
+        .export-btn:hover {
+            background-color: #34495e;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+
+        .error-message {
+            color: #e74c3c;
+            background-color: #fdecea;
+            padding: 1rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            text-align: center;
+            width: 100%;
+            max-width: 800px;
+        }
+
+        .no-data-message {
+            color: #7f8c8d;
+            text-align: center;
+            margin: 2rem 0;
+            font-size: 1.2rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <button onclick="window.location.href='/index'">Home</button>
+        <button onclick="window.location.href='/select-faculty'">School Selection</button>
+        <button onclick="window.location.href='/previous_semester'">Previous Semester</button>
+        <button onclick="window.location.href='/insert_course'">Insert Course</button>
+        <button onclick="window.location.href='/edit_course'">Edit Course</button>
+        <button onclick="window.location.href='/insert_instructor'">Insert Instructor</button>
+        <button onclick="window.location.href='/edit_instructor'">Edit Instructor</button>
+    </div>
+
+    <h1>View Previous Semester</h1>
+
+    {% if error %}
+    <div class="error-message">
+        {{ error }}
+    </div>
+    {% endif %}
+
+    <form action="/view_previous_semester" method="POST">
+        <!-- School Selection -->
+        <label for="school_code">Choose a Faculty:</label>
+        <select id="school_code" name="school_code" required>
+            <option value="">-- Select a Faculty --</option>
+            {% for school in schools %}
+            <option value="{{ school.school_code }}" {% if selected_school == school.school_code %}selected{% endif %}>{{ school.school_code }}</option>
+            {% endfor %}
+        </select>
+
+        <!-- Campus Selection -->
+        <label for="campus_code">Choose a Campus:</label>
+        <select id="campus_code" name="campus_code" required>
+            <option value="">-- Select a Campus --</option>
+            {% for campus in campuses %}
+            <option value="{{ campus.campus_code }}" {% if selected_campus == campus.campus_code %}selected{% endif %}>{{ campus.campus_code }} - {{ campus.location }}</option>
+            {% endfor %}
+        </select>
+
+        <!-- Year Selection -->
+        <label for="academic_year">Choose an Academic Year:</label>
+        <select id="academic_year" name="academic_year" required>
+            <option value="">-- Select an Academic Year --</option>
+            {% for year in academic_years %}
+            <option value="{{ year }}" {% if selected_year == year %}selected{% endif %}>{{ year }}</option>
+            {% endfor %}
+        </select>
+
+        <!-- Semester Selection -->
+        <label for="semester">Choose a Semester:</label>
+        <select id="semester" name="semester" required>
+            <option value="">-- Select a Semester --</option>
+            {% for semester in semesters %}
+            <option value="{{ semester }}" {% if selected_semester == semester %}selected{% endif %}>{{ semester }}</option>
+            {% endfor %}
+        </select>
+
+        <button type="submit">View Schedule</button>
+    </form>
+
+    {% if schedule_data %}
+    <div class="schedule-container">
+        <h2>Schedule for {{ selected_school }} - {{ selected_semester }} {{ selected_year }}</h2>
+
+        <table id="schedule-table" border="1">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>CODE</th>
+                    <th>Section</th>
+                    <th>FACUSER</th>
+                    <th>Room</th>
+                    <th>STIME</th>
+                    <th>ETIME</th>
+                    <th>M</th>
+                    <th>T</th>
+                    <th>W</th>
+                    <th>TH</th>
+                    <th>F</th>
+                    <th>S</th>
+                    <th>Campus</th>
+                    <th>University</th>
+                    <th class="hidden-column">AllowCross</th>
+                    <th class="hidden-column">SchedulingType</th>
+                    <th class="hidden-column">BypassPayroll</th>
+                    <th class="hidden-column">Capacity</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in schedule_data %}
+                <tr>
+                    <td>{{ item.CourseNumber }}</td>
+                    <td>{{ item.Code }}</td>
+                    <td>{{ item.Section }}</td>
+                    <td>{{ item.FACUSER }}</td>
+                    <td>{{ item.Room }}</td>
+                    <td class="time-cell">
+  <span class="original-time">{{ item.STIME }}</span>
+  <span class="converted-time"></span>
+</td>
+<td class="time-cell">
+  <span class="original-time">{{ item.ETIME }}</span>
+  <span class="converted-time"></span>
+</td>
+                    <td>{{ item.M }}</td>
+                    <td>{{ item.T }}</td>
+                    <td>{{ item.W }}</td>
+                    <td>{{ item.TH }}</td>
+                    <td>{{ item.F }}</td>
+                    <td>{{ item.S }}</td>
+                    <td>{{ item.Campus }}</td>
+                    <td>{{ item.University }}</td>
+                    <td class="hidden-column">{{ item.AllowCross }}</td>
+                    <td class="hidden-column">{{ item.SchedulingType }}</td>
+                    <td class="hidden-column">{{ item.BypassPayroll }}</td>
+                    <td class="hidden-column">{{ item.Capacity }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <button id="export-excel-btn" class="export-btn">Export to Excel</button>
+    </div>
+    {% elif selected_school %}
+    <div class="schedule-container">
+        <div class="no-data-message">
+            No schedule data found for {{ selected_school }} - {{ selected_semester }} {{ selected_year }}
+        </div>
+    </div>
+    {% endif %}
+
+    <script>
+        // Export to Excel functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            const exportBtn = document.getElementById('export-excel-btn');
+            if (exportBtn) {
+                exportBtn.addEventListener('click', function() {
+                    const table = document.getElementById('schedule-table');
+                    const rows = table.querySelectorAll('tr');
+
+                    // Check if the table has rows
+                    if (rows.length <= 1) {
+                        alert('The table is empty. No data to export.');
+                        return;
+                    }
+
+                    // Extract headers
+                    const headers = Array.from(rows[0].querySelectorAll('th'))
+                        .map(th => th.textContent.trim());
+
+                    const data = [];
+for (let i = 1; i < rows.length; i++) {
+    const cells = rows[i].querySelectorAll('td');
+    const rowData = [];
+    for (let j = 0; j < cells.length; j++) {
+        let cellText = cells[j].textContent.trim();
+        // Apply 24-hour conversion only to STIME and ETIME columns (index 5 and 6)
+        if (j === 5 || j === 6) {
+            cellText = convertTo24Hour(cellText);
+        }
+        rowData.push(cellText);
+    }
+    data.push(rowData);
+}
+
+
+                    // Create a worksheet
+                    const worksheet = XLSX.utils.json_to_sheet([headers, ...data], { skipHeader: true });
+
+                    // Add grey background style to headers
+                    const headerStyle = {
+                        fill: { fgColor: { rgb: "D3D3D3" } }, // Grey background color
+                        font: { bold: true }, // Bold text for headers
+                        alignment: { horizontal: "center" } // Center-align headers
+                    };
+
+                    // Apply styles to the header row
+                    for (let colIndex = 0; colIndex < headers.length; colIndex++) {
+                        const cellAddress = XLSX.utils.encode_cell({ r: 0, c: colIndex });
+                        if (!worksheet[cellAddress]) continue;
+                        worksheet[cellAddress].s = headerStyle;
+                    }
+
+                    // Auto-fit column widths
+                    const columnWidths = headers.map((header, index) => {
+                        // Calculate the maximum length of content in the column
+                        const maxLength = Math.max(
+                            header.length, // Include header length
+                            ...data.map(row => row[index]?.length || 0) // Include data lengths
+                        );
+                        return { wch: maxLength + 2 }; // Add padding (2 characters)
+                    });
+
+                    // Apply column widths to the worksheet
+                    worksheet["!cols"] = columnWidths;
+
+                    // Create a workbook and append the worksheet
+                    const workbook = XLSX.utils.book_new();
+                    XLSX.utils.book_append_sheet(workbook, worksheet, "Schedule");
+
+                    // Generate filename with selected parameters
+                    const filename = `${document.getElementById('school_code').value}_${document.getElementById('semester').value}_${document.getElementById('academic_year').value}.xlsx`;
+
+                    // Export the workbook as an Excel file
+                    XLSX.writeFile(workbook, filename);
+                });
+            }
+        });
+    </script>
+<script>
+    function convertTo24Hour(timeStr) {
+        console.log("[DEBUG] Converting time to 24-hour format. Input:", timeStr);
+
+        // Handle summer format (no AM/PM)
+        if (!timeStr.includes('AM') && !timeStr.includes('PM')) {
+            const [hourStr, minute] = timeStr.split(':');
+            let hourInt = parseInt(hourStr, 10);
+
+            // Assume times with single-digit hours (less than 8) are PM
+            if (hourInt < 8) {
+                hourInt += 12; // Convert to PM by adding 12 hours
+            }
+
+            // Format the hour with leading zeros
+            const hour24 = String(hourInt).padStart(2, '0');
+            return `${hour24}:${minute}`;
+        }
+
+        // Handle regular semester format (with AM/PM)
+        const parts = timeStr.trim().split(/\s+/);
+        if (parts.length < 2) {
+            console.error("Invalid time format:", timeStr);
+            return '';
+        }
+
+        const timePart = parts[0];
+        const period = parts[1].toUpperCase();
+        const [hourStr, minute] = timePart.split(':');
+        let hourInt = parseInt(hourStr, 10);
+
+        // Adjust hour based on AM/PM
+        if (period === "PM" && hourInt !== 12) {
+            hourInt += 12;
+        } else if (period === "AM" && hourInt === 12) {
+            hourInt = 0;
+        }
+
+        // Format the hour with leading zeros
+        const hour24 = String(hourInt).padStart(2, '0');
+        return `${hour24}:${minute}`;
+    }
+</script>
+<script>
+    // Run only once after the page loads
+    document.addEventListener("DOMContentLoaded", function () {
+        const timeCells = document.querySelectorAll(".time-cell");
+
+        timeCells.forEach(cell => {
+            const originalSpan = cell.querySelector(".original-time");
+            const convertedSpan = cell.querySelector(".converted-time");
+
+            if (originalSpan && convertedSpan) {
+                const originalTime = originalSpan.textContent.trim();
+                const convertedTime = convertTo24Hour(originalTime);
+
+                // Clear the cell and show only the converted time
+                cell.innerHTML = `<span class="converted-time">${convertedTime}</span>`;
+            }
+        });
+    });
+
+    function convertTo24Hour(timeStr) {
+        console.log("[DEBUG] Converting time to 24-hour format. Input:", timeStr);
+
+        // Handle summer format (no AM/PM)
+        if (!timeStr.includes('AM') && !timeStr.includes('PM')) {
+            const [hourStr, minute] = timeStr.split(':');
+            let hourInt = parseInt(hourStr, 10);
+
+            // Assume single-digit hours are PM
+            if (hourInt < 8) hourInt += 12;
+
+            return `${String(hourInt).padStart(2, '0')}:${minute}`;
+        }
+
+        // Handle regular semester format (with AM/PM)
+        const parts = timeStr.trim().split(/\s+/);
+        if (parts.length < 2) return '';
+
+        const timePart = parts[0];
+        const period = parts[1].toUpperCase();
+
+        const [hourStr, minute] = timePart.split(':');
+        let hourInt = parseInt(hourStr, 10);
+
+        if (period === "PM" && hourInt !== 12) {
+            hourInt += 12;
+        } else if (period === "AM" && hourInt === 12) {
+            hourInt = 0; // Midnight
+        }
+
+        return `${String(hourInt).padStart(2, '0')}:${minute}`;
+    }
+</script>
+</body>
+</html>
