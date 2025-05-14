@@ -6,7 +6,6 @@ from ortools.sat.python import cp_model
 from Get_Data_From_Database.Get_Instructor_From_database import get_instructors_by_school
 from Get_Data_From_Database.Get_Prerequisites_From_Database import get_prerequisites
 from Mapping.Semester_Mapping import get_semester
-from Save_To_Database.Save_Schedule_To_Database import save_schedule_to_database
 from time_slots import time_slots
 
 
@@ -25,6 +24,7 @@ def generate_relaxed_schedule():
         campus_code = request.form.get("campus_code")
         academic_year = request.form.get("academic_year")
         semester = request.form.get("semester")
+        TBA_isntructor = "TBA_" + school_code
         # Validate school_code and campus_code
         if not school_code or not campus_code:
             return jsonify({"error": "School code and campus code are required."}), 400
@@ -177,7 +177,7 @@ def generate_relaxed_schedule():
         instructor_sections = defaultdict(list)
         for section in all_sections:
             instr_id = instructor_assignments[section]# Skip TBA instructors (they can teach multiple courses at the same time)
-            if instr_id == "TBA":
+            if instr_id == "TBA" or instr_id == TBA_isntructor :
                 continue
             instructor_sections[instr_id].append(section)
 
@@ -294,16 +294,6 @@ def generate_relaxed_schedule():
             # Print result
             print(f"Generated Relaxed Schedule: {filtered_schedule}")
 
-            save_result = save_schedule_to_database(
-                filtered_schedule,
-                school_code,
-                campus_code,
-                academic_year,
-                semester
-            )
-
-            if not save_result:
-                print("Warning: Failed to save schedule to database")
             # Return the sorted schedule as JSON
             return jsonify(sorted_schedule)
         else:

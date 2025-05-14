@@ -863,8 +863,10 @@ document.addEventListener("DOMContentLoaded", () => {
             const isSummerSemester = semester === "Summer";
             const maxCredits = isSummerSemester ? 7 : 21;
 
+            const SchoolCode = document.querySelector('input[name="school_code"]')?.value || '';
+            const TBA_instructor = 'TBA_'+ SchoolCode
             // Handle new instructor's credits (skip TBA)
-            if (newInstr && newInstr !== 'TBA') {
+            if (newInstr && newInstr !== 'TBA' && newInstr !== TBA_instructor) {
                 const currentCredits = instructorCredits[newInstr] || 0;
                 if (currentCredits + courseCredits > maxCredits) {
                     showCustomAlert(`Error: ${newInstr} exceeds credit limit.`);
@@ -932,7 +934,11 @@ document.querySelector("#schedule-form").addEventListener("submit", async (e) =>
         const courseTitle = courseName.split(' - ')[1] || '';
         const isServiceCourse = courseTitle.includes('(Service)');
 
-        if (instructorDropdown.value === 'TBA') {
+
+        const SchoolCode = document.querySelector('input[name="school_code"]')?.value || '';
+        const TBA_instructor = 'TBA_'+ SchoolCode
+
+        if (instructorDropdown.value === 'TBA' || instructorDropdown.value === TBA_instructor) {
             // For service courses, validate that time is selected
             if (isServiceCourse && !timeDropdown.value) {
                 conflicts.push(`Error: Time must be selected for service course ${courseName}.`);
@@ -962,9 +968,10 @@ document.querySelector("#schedule-form").addEventListener("submit", async (e) =>
             const time2 = course2.querySelector('.time-dropdown').value;
             const year1 = course1.querySelector('[name^="year_"]').value;
             const year2 = course2.querySelector('[name^="year_"]').value;
-
+            const SchoolCode = document.querySelector('input[name="school_code"]')?.value || '';
+            const TBA_instructor = 'TBA_'+ SchoolCode
             // Skip conflict checks if either instructor is "TBA"
-            if (instr1 === 'TBA' || instr2 === 'TBA') {
+            if (instr1 === 'TBA' || instr2 === 'TBA' ||  instr1 === TBA_instructor || instr2 === TBA_instructor) {
                 return; // Skip this pair
             }
 
@@ -1025,6 +1032,8 @@ function formatSummerSchedule(data) {
     tableBody.innerHTML = ""; // Clear previous rows
     const campusCode = data.campus_code || document.querySelector('input[name="campus_code"]').value || "DEFAULT_CAMPUS_CODE";
 
+    let rowCount = 1; // Counter for row numbering
+
     for (const section in data) {
         if (section === "completion_time") continue;
 
@@ -1076,7 +1085,7 @@ function formatSummerSchedule(data) {
             row.classList.add('service-course-row');
         }
         row.innerHTML = `
-            <td contenteditable="true">1</td>
+            <td contenteditable="true">${rowCount}</td> <!-- Row number here -->
             <td contenteditable="true">${courseCode}</td>
             <td contenteditable="true">${sectionLetter}</td>
             <td contenteditable="true">${instructor}</td>
@@ -1097,6 +1106,9 @@ function formatSummerSchedule(data) {
             <td contenteditable="true" class="hidden-column">30</td>
         `;
         tableBody.appendChild(row);
+
+        // Increment the row counter
+        rowCount++;
 
         // Logging for debugging
         text += `Section ${section}:
@@ -1472,7 +1484,7 @@ document.getElementById("export-excel-btn").addEventListener("click", () => {
     const table = document.getElementById("editable-schedule");
     const rows = table.querySelectorAll("tr");
 
-    // Check if the table has data rows (excluding header)
+    // Check if the table has data rows
     if (rows.length <= 1) {
         alert("The table is empty. Please add data before exporting.");
         return;
@@ -1484,7 +1496,6 @@ document.getElementById("export-excel-btn").addEventListener("click", () => {
 
     // Find the index of the 'FACUSER' column
     const facuserColIndex = headers.indexOf("FACUSER");
-
     if (facuserColIndex === -1) {
         alert("FACUSER column not found!");
         return;
@@ -1495,18 +1506,53 @@ document.getElementById("export-excel-btn").addEventListener("click", () => {
     for (let i = 1; i < rows.length; i++) {
         const cells = rows[i].querySelectorAll("td");
         const rowData = Array.from(cells).map(cell => cell.textContent.trim());
-
-        // Skip this row if FACUSER is 'TBA'
         if (rowData[facuserColIndex] === "TBA") continue;
-
         data.push(rowData);
     }
 
-    // Check if there's any data left after filtering
     if (data.length === 0) {
         alert("No valid data to export. All instructors are marked as TBA.");
         return;
     }
+
+    // Get metadata from hidden form fields
+    const schoolCode = document.querySelector('input[name="school_code"]').value;
+    const campusCode = document.querySelector('input[name="campus_code"]').value;
+    const academicYear = document.querySelector('input[name="academic_year"]').value;
+    const semester = document.querySelector('input[name="semester"]').value;
+
+    // ✅ Send data to server to save to database
+    fetch('/save_schedule', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            headers,
+            scheduleData: data,
+            schoolCode,
+            campusCode,
+            academicYear,
+            semester
+        }),
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error('Server responded with an error.');
+        }
+        return response.json();
+    })
+    .then(result => {
+        if (result.success) {
+            alert('Schedule saved to database successfully!');
+        } else {
+            alert('Failed to save schedule to database.');
+        }
+    })
+    .catch(error => {
+        console.error('Error saving schedule:', error);
+        alert('An error occurred while saving the schedule to the database.');
+    });
 
     // Create a worksheet
     const worksheet = XLSX.utils.json_to_sheet([headers, ...data], { skipHeader: true });

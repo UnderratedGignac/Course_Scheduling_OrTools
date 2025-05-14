@@ -74,7 +74,7 @@ def select_faculty():
     from datetime import datetime
     current_year = datetime.now().year
     next_year = current_year + 1
-    academic_years = [f"{current_year}-{next_year}", f"{next_year}-{next_year + 1}"]
+    academic_years = [f"{current_year-1}-{current_year}",f"{current_year}-{next_year}", f"{next_year}-{next_year + 1}"]
 
     # Define semesters
     semesters = ["Fall", "Spring", "Summer"]
@@ -1175,6 +1175,90 @@ def course_selection():
         academic_year=academic_year,
         semester=semester
     )
+
+@app.route('/save_schedule', methods=['POST'])
+def save_schedule():
+    data = request.json
+    headers = data.get('headers')
+    schedule_data = data.get('scheduleData')
+
+    # Get metadata from request
+    academic_year = data.get('academicYear')  # Maps to Year column
+    semester = data.get('semester')  # Maps to Semester column
+    campus_code = data.get('campusCode')  # Maps to Campus column (convert to int)
+    school_code = data.get('schoolCode')  # Optional: if needed for filtering
+
+    try:
+        conn_str = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={DB_CONFIG['server']};"
+            f"DATABASE={DB_CONFIG['database']};"
+            f"UID={DB_CONFIG['username']};"
+            f"PWD={DB_CONFIG['password']};"
+        )
+        connection = pyodbc.connect(conn_str)
+        cursor = connection.cursor()
+
+        # Convert campus_code to integer (if valid)
+        campus_int = int(campus_code) if campus_code and campus_code.isdigit() else 0
+
+        # 🔥 DELETE OLD RECORDS FOR THE SAME TERM/CAMPUS FIRST
+        cursor.execute("""
+                       DELETE
+                       FROM schedule
+                       WHERE Campus = ?
+                                 AND Year = ?
+                         AND Semester = ?
+                           And fac_code = ?
+                       """, (campus_int, academic_year, semester, school_code))
+
+        # Insert new schedule data
+        query = """
+                INSERT INTO schedule (CourseNumber, Code, Section, FACUSER, Room, \
+                                      STIME, ETIME, M, T, W, TH, F, S, Campus, University, \
+                                      AllowCross, SchedulingType, BypassPayroll, Capacity, \
+                                      Year, Semester, fac_code) \
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                """
+
+        for idx, row in enumerate(schedule_data):
+            # Map row data to parameters
+            params = (
+                idx + 1,  # CourseNumber (row index)
+                row[1],  # Code
+                row[2],  # Section
+                row[3],  # FACUSER (instructor)
+                row[4],  # Room
+                row[5],  # STIME
+                row[6],  # ETIME
+                int(row[7]) if row[7] else 0,  # M
+                int(row[8]) if row[8] else 0,  # T
+                int(row[9]) if row[9] else 0,  # W
+                int(row[10]) if row[10] else 0,  # TH
+                int(row[11]) if row[11] else 0,  # F
+                int(row[12]) if row[12] else 0,  # S
+                campus_int,  # Campus (converted to int)
+                1,  # University (default value)
+                0,  # AllowCross (default value)
+                'Normal',  # SchedulingType (default value)
+                0,  # BypassPayroll (default value)
+                30,  # Capacity (default value)
+                academic_year,  # Year
+                semester,  # Semester
+                school_code  # fac_code (nullable)
+            )
+            cursor.execute(query, params)
+
+        connection.commit()
+        return jsonify({"success": True}), 200
+
+    except Exception as e:
+        print("Error saving schedule:", e)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+    finally:
+        if 'connection' in locals():
+            connection.close()
 
 if __name__ == "__main__":
     app.run(debug=True)

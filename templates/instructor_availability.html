@@ -230,16 +230,70 @@
                     }
                 });
             });
+            // Add selected instructors to the DOM dynamically
+        document.getElementById("addSelectedInstructorsBtn").addEventListener("click", () => {
+    const selectedCheckboxes = document.querySelectorAll("#instructor-checkbox-list input[type='checkbox']:checked");
+    const availabilityGridContainer = document.getElementById("availability-grid-container");
 
-            // Handle adding selected instructors
-            document.getElementById('addSelectedInstructorsBtn').addEventListener('click', function() {
-                const selectedInstructors = document.querySelectorAll('input[name="selected_instructors"]:checked');
-                selectedInstructors.forEach(checkbox => {
-                    const facuser = checkbox.value;
-                    displayedInstructors.add(facuser);
-                });
-                modal.style.display = "none";
-            });
+    selectedCheckboxes.forEach(checkbox => {
+        const facuser = checkbox.value;
+
+        // Check if the instructor is already displayed
+        if (!displayedInstructors.has(facuser)) {
+            const summerSlots = ['8:00-9:50', '10:00-11:50', '12:00-1:50'];
+            const regularSlots = [
+                "8:00-9:15 AM", "9:30-10:45 AM", "11:00 AM-12:15 PM",
+                "12:30-1:45 PM", "2:00-3:15 PM", "3:30-4:45 PM", "5:00-6:15 PM", "6:30-8:45 PM"
+            ];
+            const slots = "{{ semester }}" === "Summer" ? summerSlots : regularSlots;
+
+            // Generate HTML for the new instructor
+            const newInstructorHTML = `
+                <div class="availability-grid" id="instructor-${facuser}">
+                    <h4>${facuser}</h4>
+                    ${slots.map((slot, index) => `
+                        <div class="time-slot">
+                            <label>${slot}</label>
+                            ${"{{ semester }}" !== "Summer" ? `
+                                <button
+                                    type="button"
+                                    class="availability-btn"
+                                    data-instr="${facuser}"
+                                    data-day="0"
+                                    data-slot="${index}"
+                                >MW ${slot}</button>
+                                <button
+                                    type="button"
+                                    class="availability-btn"
+                                    data-instr="${facuser}"
+                                    data-day="1"
+                                    data-slot="${index}"
+                                >TTh ${slot}</button>
+                            ` : `
+                                <button
+                                    type="button"
+                                    class="availability-btn"
+                                    data-instr="${facuser}"
+                                    data-day="0"
+                                    data-slot="${index}"
+                                >${slot}</button>
+                            `}
+                        </div>
+                    `).join("")}
+                </div>
+            `;
+
+            // Append the new instructor to the grid
+            availabilityGridContainer.insertAdjacentHTML("beforeend", newInstructorHTML);
+
+            // Add the instructor to the displayedInstructors set
+            displayedInstructors.add(facuser);
+        }
+    });
+
+    // Close the modal after adding
+    modal.style.display = "none";
+});
         });
 
         // Improved search functionality to preserve layout

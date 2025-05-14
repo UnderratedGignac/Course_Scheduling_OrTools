@@ -3,8 +3,6 @@ from ortools.sat.python import cp_model
 
 from Get_Data_From_Database.Get_Instructor_From_database import get_instructors_by_school
 from Mapping.Semester_Mapping import get_semester
-from Save_To_Database.Save_Schedule_To_Database import save_schedule_to_database
-
 
 def generate_summer_schedule():
     try:
@@ -26,7 +24,7 @@ def generate_summer_schedule():
         school_code = request.form.get("school_code")
         campus_code = request.form.get("campus_code")
         academic_year = request.form.get("academic_year")
-
+        TBA_isntructor = "TBA_" + school_code
         # Validate school_code and campus_code
         if not school_code or not campus_code:
             return jsonify({"error": "School code and campus code are required."}), 400
@@ -90,6 +88,22 @@ def generate_summer_schedule():
         model = cp_model.CpModel()
         slot_vars = {s: model.NewIntVar(0, len(regular_time_slots) - 1, f"slot_{s}") for s in all_sections}
 
+        # --- NEW CONSTRAINT: Prevent same-course lab and theory from overlapping ---
+        for s in all_sections:
+            base_s = s.rsplit("_", 1)[0]  # e.g., 'CSCI250L'
+
+            # If it's a lab course (ends with L), find the matching theory course
+            if base_s.endswith("L"):
+                theory_course_base = base_s[:-1]  # Remove 'L' -> 'CSCI250'
+
+                # Find matching theory section(s)
+                for t in all_sections:
+                    base_t = t.rsplit("_", 1)[0]
+                    if base_t == theory_course_base:
+                        # Enforce different time slots
+                        model.Add(slot_vars[s] != slot_vars[t])
+                        print(f"Added constraint: {s} != {t}")
+
         # Add fixed time constraints (if user specified a time)
         for section, time_idx in fixed_times.items():
             model.Add(slot_vars[section] == time_idx)
@@ -128,7 +142,7 @@ def generate_summer_schedule():
                 # Only apply same-instructor constraint if both have assigned instructors (not TBA)
                 inst1 = instructor_assignments[s1]
                 inst2 = instructor_assignments[s2]
-                if inst1 == inst2 and inst1 != "TBA":
+                if inst1 == inst2 and inst1 != "TBA" and inst1 != TBA_isntructor:
                     model.Add(slot_vars[s1] != slot_vars[s2])
 
                 # Check same year and different courses
@@ -194,40 +208,6 @@ def generate_summer_schedule():
             # Debugging: Log the generated schedule
             print(f"Generated Schedule: {sorted_schedule}")
 
-            # Function to filter courses with 'TBA' instructors
-            def filter_tba_courses(schedule):
-                filtered_schedule = {}
-
-                for key, value in schedule.items():
-                    # Only check course entries (skip completion_time or other metadata)
-                    if isinstance(value, dict) and 'instructor' in value:
-                        if value['instructor'] != 'TBA':
-                            filtered_schedule[key] = value
-                    else:
-                        # Keep non-course keys like 'completion_time'
-                        filtered_schedule[key] = value
-
-                return filtered_schedule
-
-            # Apply filtering
-            filtered_schedule = filter_tba_courses(sorted_schedule)
-
-            # Print result
-            print(f"Generated Relaxed Schedule: {filtered_schedule}")
-
-            semester = request.form.get("semester")
-
-            save_result = save_schedule_to_database(
-                filtered_schedule,
-                school_code,
-                campus_code,
-                academic_year,
-                semester
-            )
-
-            if not save_result:
-                print("Warning: Failed to save schedule to database")
-            # Return the sorted schedule as JSON
             return jsonify(sorted_schedule)
         else:
             raise Exception("No feasible schedule found. Please adjust constraints.")

@@ -65,6 +65,13 @@ def fetch_instructor_availability_internal(school_code, academic_year, semester,
             "time_slots": time_slots.copy(),
             "name": "To Be Announced"
         }
+
+        TBA_instructor = "TBA_" + school_code
+
+        instructor_availability[TBA_instructor] = {
+            "time_slots": time_slots.copy(),
+            "name": "To Be Announced"
+        }
         print(f"[DEBUG] Organized instructor availability: {instructor_availability}")
 
         # Close the connection
@@ -159,6 +166,8 @@ def fetch_instructor_availability_internal_for_course_selection(school_code, aca
 
         # Organize data into a dictionary
         instructor_availability = {}
+        tba_instructor = "TBA_" + school_code
+        print (tba_instructor)
         for row in rows:
             facuser = row.facuser
             time_slot = row.time_slot
@@ -169,6 +178,9 @@ def fetch_instructor_availability_internal_for_course_selection(school_code, aca
                 instructor_availability[facuser].append(time_slot)
             if "TBA" not in instructor_availability:
                 instructor_availability["TBA"] = time_slots.copy()
+                print("[DEBUG] Added 'TBA' to instructor_availability with all time slots.")
+            if tba_instructor not in instructor_availability:
+                instructor_availability[tba_instructor] = time_slots.copy()
                 print("[DEBUG] Added 'TBA' to instructor_availability with all time slots.")
         print(f"[DEBUG] Organized instructor availability: {instructor_availability}")
 
