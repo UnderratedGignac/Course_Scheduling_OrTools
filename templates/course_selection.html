@@ -742,17 +742,29 @@ document.addEventListener("DOMContentLoaded", () => {
         const courseYear = selectedOption ? selectedOption.getAttribute("data-course-year") : "1";
         const courseCredits = selectedCourse ? selectedCourse.credits || 0 : 0;
 
-        // Find the next available section letter (A-Z)
-        let nextLetter = 'A';
-        const existingSections = courseSections[selectedCode] || [];
+        // Find the next available section letter (A, B, ..., Z, AA, AB, ..., AZ, BA, ...)
+let nextLetter = '';
+const existingSections = courseSections[selectedCode] || [];
 
-        for (let i = 0; i < 26; i++) {
-            const candidate = String.fromCharCode(65 + i);
-            if (!existingSections.includes(candidate)) {
-                nextLetter = candidate;
-                break;
-            }
-        }
+// Helper function to generate section labels A-Z, AA-ZZ, AAA-ZZZ, etc.
+function generateSectionLabel(index) {
+    let label = '';
+    while (index > 0) {
+        index--;
+        label = String.fromCharCode(65 + (index % 26)) + label;
+        index = Math.floor(index / 26);
+    }
+    return label;
+}
+
+// Try up to 'ZZZ' (or increase this limit if needed)
+for (let i = 0; i < 1000; i++) { // 1000 is a safe upper limit for many combinations
+    const candidate = generateSectionLabel(i + 1); // start from 1 -> 'A'
+    if (!existingSections.includes(candidate)) {
+        nextLetter = candidate;
+        break;
+    }
+}
 
         // Update course sections
         if (!courseSections[selectedCode]) courseSections[selectedCode] = [];
