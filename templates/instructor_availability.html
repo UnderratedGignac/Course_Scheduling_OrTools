@@ -206,31 +206,36 @@
 
         // Handle instructor selection and button clicks
         document.addEventListener('DOMContentLoaded', function() {
-            // Add click handlers for availability buttons
-            document.querySelectorAll('.availability-btn').forEach(button => {
-                button.addEventListener('click', function() {
-                    this.classList.toggle('selected');
-                    const facuser = this.dataset.instr;
-                    const day = this.dataset.day;
-                    const slot = this.dataset.slot;
-                    const formDataKey = `availability_${facuser}`;
-                    const formDataValue = `${day}_${slot}`;
+    const availabilityGridContainer = document.getElementById("availability-grid-container");
 
-                    // Remove existing hidden input if it exists
-                    const existingInput = document.querySelector(`input[name="${formDataKey}"][value="${formDataValue}"]`);
-                    if (existingInput) {
-                        existingInput.remove();
-                    } else {
-                        // Add new hidden input
-                        const input = document.createElement('input');
-                        input.type = 'hidden';
-                        input.name = formDataKey;
-                        input.value = formDataValue;
-                        document.getElementById('availability-form').appendChild(input);
-                    }
-                });
-            });
+    // Use event delegation for dynamically added buttons
+    availabilityGridContainer.addEventListener('click', function(event) {
+        if (event.target && event.target.classList.contains('availability-btn')) {
+            const button = event.target;
+            button.classList.toggle('selected');
+            const facuser = button.dataset.instr;
+            const day = button.dataset.day;
+            const slot = button.dataset.slot;
+            const formDataKey = `availability_${facuser}`;
+            const formDataValue = `${day}_${slot}`;
+
+            // Remove existing hidden input if it exists
+            const existingInput = document.querySelector(`input[name="${formDataKey}"][value="${formDataValue}"]`);
+            if (existingInput) {
+                existingInput.remove();
+            } else {
+                // Add new hidden input
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = formDataKey;
+                input.value = formDataValue;
+                document.getElementById('availability-form').appendChild(input);
+            }
+        }
+    });
+
             // Add selected instructors to the DOM dynamically
+        // Add selected instructors to the DOM dynamically
         document.getElementById("addSelectedInstructorsBtn").addEventListener("click", () => {
     const selectedCheckboxes = document.querySelectorAll("#instructor-checkbox-list input[type='checkbox']:checked");
     const availabilityGridContainer = document.getElementById("availability-grid-container");
