@@ -1125,6 +1125,56 @@ def get_faculties():
     finally:
         connection.close()
 
+
+def get_course_capacities_by_faculty(fac_code):
+    """
+    Fetch course capacities for a given fac_code.
+
+    Args:
+        fac_code (str): Faculty code (e.g., 'CSIT')
+
+    Returns:
+        list: List of dicts like [{"course_code": "CS101", "capacity": 40}, ...]
+    """
+    try:
+        # Build connection string
+        conn_string = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={DB_CONFIG['server']};"
+            f"DATABASE={DB_CONFIG['database']};"
+            f"UID={DB_CONFIG['username']};"
+            f"PWD={DB_CONFIG['password']};"
+        )
+        print(f"[INFO] Connecting to database for fac_code: {fac_code}")
+
+        connection = pyodbc.connect(conn_string)
+        cursor = connection.cursor()
+
+        # Query to get course capacities for this faculty
+        query = """
+                SELECT [Code], [Capcity]
+                FROM [offeringsDB].[dbo].[Course]
+                WHERE [fac_code] = ? \
+                """
+        print(f"[DEBUG] Executing query: {query} with fac_code = {fac_code}")
+        cursor.execute(query, fac_code)
+
+        rows = cursor.fetchall()
+        print(f"[INFO] Fetched {len(rows)} course records for fac_code '{fac_code}'")
+
+        cursor.close()
+        connection.close()
+
+        # Format result
+        capacities = [
+            {"course_code": row[0], "capacity": row[1]} for row in rows
+        ]
+        return capacities
+
+    except Exception as e:
+        print(f"[ERROR] Error fetching course capacities: {e}")
+        return []
+
 @app.route("/course-selection")
 def course_selection():
     school_code = request.args.get("school_code")
@@ -1143,7 +1193,6 @@ def course_selection():
     service_courses = []
 
     for course_str in service_courses_json:
-        import json
         course_data = json.loads(course_str)
         course_data["Title"] = f"{course_data['Title']} (Service)"  # Mark as service
         service_courses.append(course_data)
@@ -1163,7 +1212,9 @@ def course_selection():
         session["instructor_availability"] = {}
 
     instructor_availability = session.get("instructor_availability", {})
+    course_capacities = get_course_capacities_by_faculty(school_code)
 
+    print("[DEBUG] Course Capacities Sent to Template:", course_capacities)
     return render_template(
         "course_selection.html",
         courses=all_courses,  # Includes both regular and service courses
@@ -1173,7 +1224,8 @@ def course_selection():
         school_code=school_code,
         campus_code=campus_code,
         academic_year=academic_year,
-        semester=semester
+        semester=semester ,
+        course_capacities=json.dumps(course_capacities)
     )
 
 @app.route('/save_schedule', methods=['POST'])
@@ -1181,7 +1233,7 @@ def save_schedule():
     data = request.json
     headers = data.get('headers')
     schedule_data = data.get('scheduleData')
-
+    print(schedule_data)
     # Get metadata from request
     academic_year = data.get('academicYear')  # Maps to Year column
     semester = data.get('semester')  # Maps to Semester column
@@ -1242,7 +1294,7 @@ def save_schedule():
                 0,  # AllowCross (default value)
                 'Normal',  # SchedulingType (default value)
                 0,  # BypassPayroll (default value)
-                30,  # Capacity (default value)
+                int(row[18]) if row[18] else 30,  # Capacity (default value)
                 academic_year,  # Year
                 semester,  # Semester
                 school_code  # fac_code (nullable)

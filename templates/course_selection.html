@@ -95,6 +95,12 @@
     </style>
 </head>
 <body>
+<script>
+function getCapacity(courseId) {
+    const course = courseCapacities.find(c => c.course_code === courseId);
+    return course ? course.capacity : 30;
+}
+</script>
 <!-- Reload Confirmation Modal -->
 <div id="reloadModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); display: none; z-index: 1000;">
   <div style="background-color: #fff; margin: 15% auto; padding: 20px; border-radius: 8px; width: 300px; box-shadow: 0 5px 15px rgba(0,0,0,0.3);">
@@ -146,7 +152,7 @@
             <select name="time_${section}" class="time-dropdown">
                 <option value="">Select Time (Optional)</option>
             </select>
-            <input type="hidden" name="students_${section}" value="25">
+            <input type="hidden" name="students_${section}" value="${getCapacity(courseCode)}">
         `;
 
         // Get the dropdowns
@@ -679,6 +685,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const courses = JSON.parse('{{ courses | tojson | safe }}');
     const instructors = JSON.parse('{{ instructors | tojson | safe }}');
+    const courseCapacities = {{ course_capacities | safe }};
+    console.log(courseCapacities);
     const addedCourses = new Set();
     const courseSections = {};
     let instructorAvailability = {}; // To store fetched instructor availability
@@ -803,7 +811,7 @@ for (let i = 0; i < 1000; i++) { // 1000 is a safe upper limit for many combinat
             <select name="time_${courseWithSection}" class="time-dropdown" ${isServiceCourseCard ? 'required' : ''}>
                 <option value="">${isServiceCourseCard ? 'Select Time (Required)' : 'Select Time (Optional)'}</option>
             </select>
-            <input type="hidden" name="students_${courseWithSection}" value="25">
+            <input type="hidden" name="students_${courseWithSection}" value="${getCapacity(selectedCode)}>
         `;
 
         // Extract course title after creating the card
@@ -1055,6 +1063,7 @@ function formatSummerSchedule(data) {
         const instructor = data[section].instructor || 'TBA';
         const isServiceCourse = course && course.Title.includes('(Service)');
         const isTBAInstructor = instructor === 'TBA';
+        const capacity = getCapacity(courseCode);
 
         // Parse time using the summer-specific logic
         const parsedTime = parseSummerTime(rawTime);
@@ -1115,7 +1124,7 @@ function formatSummerSchedule(data) {
             <td contenteditable="true" class="hidden-column">0</td>
             <td contenteditable="true" class="hidden-column">Normal</td>
             <td contenteditable="true" class="hidden-column">No</td>
-            <td contenteditable="true" class="hidden-column">30</td>
+            <td contenteditable="true" class="hidden-column">${capacity}</td>
         `;
         tableBody.appendChild(row);
 
@@ -1147,6 +1156,7 @@ function formatRegularSchedule(data) {
         const instructor = data[section].instructor || 'TBA';
         const isServiceCourse = course && course.Title.includes('(Service)');
         const isTBAInstructor = instructor === 'TBA';
+        const capacity = getCapacity(courseCode);
 
         // Parse time (same as before, unchanged)
         let stimeTime, etimeTime;
@@ -1181,7 +1191,8 @@ function formatRegularSchedule(data) {
             isLab: isLab,
             assignedDays: daysStr, // Default to original days unless changed
             isServiceCourse: isServiceCourse, // Add this flag
-            isTBAInstructor: isTBAInstructor // Add this flag
+            isTBAInstructor: isTBAInstructor ,// Add this flag
+            capacity: capacity
         });
     }
     // Phase 2: Group and assign days for labs
@@ -1249,7 +1260,7 @@ function formatRegularSchedule(data) {
             <td class="hidden-column">0</td>
             <td class="hidden-column">Normal</td>
             <td class="hidden-column">No</td>
-            <td class="hidden-column">30</td>
+            <td class="hidden-column">${sectionData.capacity}</td>
         `;
         tableBody.appendChild(row);
 
